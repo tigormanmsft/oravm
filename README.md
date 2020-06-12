@@ -49,3 +49,7 @@ Azure CLI (bash) script to fully automate the creation of an Azure VM to run Ora
 
         3) Use the "-v" (verbose) switch to verify that program variables
            have the expected values
+
+# Usage examples
+
+(under construction -- please email "tigorman@micrsoft.com" to get moving on this!)
