@@ -10,7 +10,7 @@ Azure CLI (bash) script to fully automate the creation of an Azure VM to run Ora
 
 ## Usage:
 
-        $0 -G val -H val -N -O val -P val -S val -c val -d val -i val -n val -p val -r val -s val -u val -v -w val -z val"
+        ./cr_oravm.sh -G val -H val -N -O val -P val -S val -c val -d val -i val -n val -p val -r val -s val -u val -v -w val -z val
 
 ### where:
 
