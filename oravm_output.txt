@@ -1,0 +1,106 @@
+Output generated using these command-line options...
+
+$ ./cr_oravm.sh -v \
+	-S "TIGORMAN-CET subscription" \
+	-P example \
+	-i Standard_E2ds_v4 \
+	-n 2 \
+	-z 2048 \
+	-p 1522 \
+	-s ORCL \
+	-r westus2 \
+	-u Oracle:oracle-database-19-3:oracle-db-19300:19.3.0 \
+	-H /u01/app/oracle/product/19.0.0/dbhome_1
+
+Tue Jun 16 14:29:44 UTC 2020 - DBUG: parameter _rgName is "ora-example-rg"
+Tue Jun 16 14:29:44 UTC 2020 - DBUG: parameter _skipSaVnetSubnetNsg is "false"
+Tue Jun 16 14:29:44 UTC 2020 - DBUG: parameter _azureOwner is "ora"
+Tue Jun 16 14:29:44 UTC 2020 - DBUG: parameter _azureProject is "example"
+Tue Jun 16 14:29:44 UTC 2020 - DBUG: parameter _azureSubscription is "exampleSubscription"
+Tue Jun 16 14:29:44 UTC 2020 - DBUG: parameter _vmDataDiskCaching is "ReadOnly"
+Tue Jun 16 14:29:44 UTC 2020 - DBUG: parameter _vmDomain is "internal.cloudapp.net"
+Tue Jun 16 14:29:44 UTC 2020 - DBUG: parameter _oraHome is "/u01/app/oracle/product/19.0.0/dbhome_1"
+Tue Jun 16 14:29:44 UTC 2020 - DBUG: parameter _vmInstanceType is "Standard_E2ds_v4"
+Tue Jun 16 14:29:44 UTC 2020 - DBUG: parameter _vmDataDiskNbr is "2"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: parameter _oraLsnrPort is "1522"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: parameter _azureRegion is "westus2"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: parameter _oraSid is "ORCL"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: parameter _vmUrn is "Oracle:oracle-database-19-3:oracle-db-19300:19.3.0"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: parameter _vmDataDiskSzGB is "2048"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _progVersion is "0.2"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _workDir is "/home/ora/clouddrive/scripts"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _logFile is "/home/ora/clouddrive/scripts/ora-example.log"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _saName is "oraexamplesa"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _vnetName is "ora-example-vnet"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _subnetName is "ora-example-subnet"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _nsgName is "ora-example-nsg"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _nicName is "ora-example-nic01"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _pubIpName is "ora-example-public-ip01"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _vmName is "ora-example-vm01"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _vmOsDiskSize is "32"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _vgName is "vg_ora01"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _lvName is "lv_ora01"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _oraInvDir is "/u01/app/oraInventory"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _oraOsAcct is "oracle"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _oraOsGroup is "oinstall"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _oraCharSet is "WE8ISO8859P15"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _oraMntDir is "/u02"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _oraDataDir is "/u02/oradata"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _oraFRADir is "/u02/orarecv"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _oraRedoSizeMB is "500"
+Tue Jun 16 14:29:45 UTC 2020 - INFO: az group exists -n ora-example-rg...
+Tue Jun 16 14:29:46 UTC 2020 - INFO: az account set...
+Tue Jun 16 14:29:47 UTC 2020 - INFO: az configure --defaults group location...
+Tue Jun 16 14:29:48 UTC 2020 - INFO: az storage account create oraexamplesa...
+Tue Jun 16 14:30:09 UTC 2020 - INFO: az network vnet create ora-example-vnet...
+Tue Jun 16 14:30:15 UTC 2020 - INFO: az network nsg create ora-example-nsg...
+Tue Jun 16 14:30:21 UTC 2020 - INFO: az network nsg rule create default-all-ssh...
+Tue Jun 16 14:30:44 UTC 2020 - INFO: az network public-ip create ora-example-public-ip01...
+Tue Jun 16 14:30:48 UTC 2020 - INFO: az network nic create ora-example-nic01...
+Tue Jun 16 14:31:21 UTC 2020 - INFO: az vm create ora-example-vm01...
+Tue Jun 16 14:32:26 UTC 2020 - INFO: az network public-ip show ora-example-public-ip01...
+Tue Jun 16 14:32:28 UTC 2020 - INFO: public IP 20.191.118.87 for ora-example-vm01...
+Tue Jun 16 14:32:28 UTC 2020 - INFO: mkdir /u02 on ora-example-vm01...
+Warning: Permanently added '20.191.118.87' (ECDSA) to the list of known hosts.
+Tue Jun 16 14:32:29 UTC 2020 - INFO: chown /u02 on ora-example-vm01...
+Tue Jun 16 14:32:30 UTC 2020 - INFO: yum install lvm2 on ora-example-vm01...
+Tue Jun 16 14:32:51 UTC 2020 - INFO: az vm disk attach (ora-example-vm01-datadisk01)...
+Tue Jun 16 14:33:25 UTC 2020 - INFO: parted /dev/sdc mklabel on ora-example-vm01...
+Tue Jun 16 14:33:25 UTC 2020 - INFO: parted /dev/sdc mkpart primary on ora-example-vm01...
+Tue Jun 16 14:33:26 UTC 2020 - INFO: pvcreate /dev/sdc1 on ora-example-vm01...
+Tue Jun 16 14:33:27 UTC 2020 - INFO: az vm disk attach (ora-example-vm01-datadisk02)...
+Tue Jun 16 14:34:01 UTC 2020 - INFO: parted /dev/sdd mklabel on ora-example-vm01...
+Tue Jun 16 14:34:02 UTC 2020 - INFO: parted /dev/sdd mkpart primary on ora-example-vm01...
+Tue Jun 16 14:34:02 UTC 2020 - INFO: pvcreate /dev/sdd1 on ora-example-vm01...
+Tue Jun 16 14:34:03 UTC 2020 - INFO: vgcreate vg_ora01 /dev/sdc1 /dev/sdd1  on ora-example-vm01...
+Tue Jun 16 14:34:04 UTC 2020 - INFO: vgdisplay vg_ora01 on ora-example-vm01...
+Tue Jun 16 14:34:05 UTC 2020 - INFO: lvcreate vg_ora01 on ora-example-vm01...
+Tue Jun 16 14:34:06 UTC 2020 - INFO: mkfs.ext4 /dev/vg_ora01/lv_ora01 on ora-example-vm01...
+Tue Jun 16 14:34:29 UTC 2020 - INFO: mount /dev/vg_ora01/lv_ora01 /u02 on ora-example-vm01...
+Tue Jun 16 14:34:30 UTC 2020 - INFO: mkdir /u02/oradata /u02/orarecv on ora-example-vm01...
+Tue Jun 16 14:34:31 UTC 2020 - INFO: chown /u02/oradata /u02/orarecv on ora-example-vm01...
+Tue Jun 16 14:34:31 UTC 2020 - INFO: copy oraInst.loc file on ora-example-vm01
+Tue Jun 16 14:34:33 UTC 2020 - INFO: sudo su - oracle dbca -createDatabase ORCL on ora-example-vm01...
+Prepare for db operation
+10% complete
+Copying database files
+40% complete
+Creating and starting Oracle instance
+42% complete
+46% complete
+50% complete
+54% complete
+60% complete
+Completing Database Creation
+66% complete
+69% complete
+70% complete
+Executing Post Configuration Actions
+100% complete
+Database creation complete. For details check the logfiles at:
+ /u01/app/oracle/cfgtoollogs/dbca/ORCL.
+Database Information:
+Global Database Name:ORCL
+System Identifier(SID):ORCL
+Look at the log file "/u01/app/oracle/cfgtoollogs/dbca/ORCL/ORCL.log" for further details.
+Tue Jun 16 14:46:16 UTC 2020 - INFO: completed successfully!
