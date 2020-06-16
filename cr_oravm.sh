@@ -38,13 +38,65 @@
 #
 # Command-line Parameters:
 #
+#	Usage: ./cr_oravm.sh -G val -H val -N -O val -P val -S val -c val -d val -i val -n val -p val -r val -s val -u val -v -w val -z val
+#
+#	where:
+#		-G resource-group-name	name of the Azure resource group (default: \"{owner}-{project}-rg\")
+#		-H ORACLE_HOME		full path of the ORACLE_HOME software (default: /u01/app/oracle/product/12.2.0/dbhome_1)
+#		-N			skip storage account and network setup i.e. vnet, NSG, NSG rules (default: false)
+#		-O owner-tag		name of the owner to use in Azure tags (default)
+#		-P project-tag		name of the project to use in Azure tags (no default)
+#		-S subscription		name of the Azure subscription (no default)
+#		-c None|ReadOnly	caching of managed disk for data (default: ReadOnly)
+#		-d domain-name		IP domain name (default: internal.cloudapp.net)
+#		-i instance-type	name of the Azure VM instance type (default: Standard_DS11-1_v2)
+#		-n #data-disks		number of data disks to attach to the VM (default: 1)
+#		-p Oracle-port		port number of the Oracle TNS Listener (default: 1521)
+#		-r region		name of Azure region (default: westus)
+#		-s ORACLE_SID		Oracle System ID (SID) value (default: oradb01)
+#		-u urn			Azure URN for the VM from the marketplace (default: Oracle:Oracle-Database-Ee:12.2.0.1:12.2.20180725)
+#		-v			set verbose output is true (default: false)
+#		-w password		clear-text value of initial SYS and SYSTEM password in Oracle database (default: oracleA1)
+#		-z data-disk-GB		size of each attached data-disk in GB (default: 4095)
+#
 # Expected command-line output:
+#
+#	Please see file "oravm_output.txt" at https://github.com/tigormanmsft/oravm.
 #
 # Usage notes:
 #
+#	1) Azure subscription, specify with "-S" switch
+#
+#	2) Azure owner, default is output of "whoami" command in shell, can be
+#	   specified using "-O" switch on command-line
+#
+#	3) Azure project, default is "oravm", can be specified using "-P"
+#	   switch on command-line
+#
+#	4) Azure resource group, specify with "-G" switch or with a
+#	   combination of "-O" (project owner tag) and "-P" (project name)
+#	   values (default: "(project owner tag)-(project name)-rg").
+#
+#	   For example, if the project owner tag is "abc" and the project
+#	   name is "beetlejuice", then by default the resource group is
+#	   expected to be named "abc-beetlejuice-rg", unless changes have
+#	   been specified using the "-G", "-O", or "-P" switches
+#
+#	5) Use the "-v" (verbose) switch to verify that program variables
+#	   have the expected values
+#
+#	6) For users who are expected to use prebuilt storage accounts
+#	   and networking (i.e. vnet, subnet, network security groups, etc),
+#	   consider using the "-N" switch to accept these as prerequisites 
+#
+#	Please be aware that Azure owner (i.e. "-O") and Azure project (i.e. "-P")
+#	are used to generate names for the Azure resource group, storage
+#	account, virtual network, subnet, network security group and rules,
+#	VM, and storage disks.  Use the "-v" switch to verify expected naming.
+#
 # Modifications:
 #	TGorman	23apr20	written v0.1
-#	TGorman	16jun20	several bug fixes for v0.2
+#	TGorman	16jun20 various bug fixes for v0.2
 #================================================================================
 #
 #--------------------------------------------------------------------------------
@@ -55,7 +107,7 @@ _outputMode="terse"
 _azureOwner="`whoami`"
 _azureProject="oravm"
 _azureRegion="westus"
-_azureSubscription="TIGORMAN-CET subscription"
+_azureSubscription=""
 _workDir="`pwd`"
 _skipSaVnetSubnetNsg="false"
 _vmUrn="Oracle:Oracle-Database-Ee:12.2.0.1:12.2.20180725"
