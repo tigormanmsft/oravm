@@ -96,13 +96,14 @@
 #
 # Modifications:
 #	TGorman	23apr20	written v0.1
-#	TGorman	16jun20 various bug fixes for v0.2
+#	TGorman	15jun20 various bug fixes for v0.2
+#	TGorman	16jun20 move TEMP to temporary disk for v0.3
 #================================================================================
 #
 #--------------------------------------------------------------------------------
 # Set global environment variables with default values...
 #--------------------------------------------------------------------------------
-_progVersion="0.2"
+_progVersion="0.3"
 _outputMode="terse"
 _azureOwner="`whoami`"
 _azureProject="oravm"
@@ -131,6 +132,9 @@ _oraFRADir="${_oraMntDir}/orarecv"
 _oraSysPwd=oracleA1
 _oraRedoSizeMB=500
 _oraLsnrPort=1521
+_oraMemPct=70
+_oraMemType="AUTO_SGA"
+_oraFraSzGB=40960
 typeset -i _scsiDevNbr=24
 declare -a _scsiDevList=("", "sdc" "sdd" "sde" "sdf" "sdg" "sdh" \
                              "sdi" "sdj" "sdk" "sdl" "sdm" "sdn" \
@@ -185,7 +189,8 @@ shift $((OPTIND-1))
 # If any errors occurred while processing the command-line parameters, then display
 # a usage message and exit with failure status...
 #--------------------------------------------------------------------------------
-if (( ${_parseErrs} > 0 )); then
+if (( ${_parseErrs} > 0 ))
+then
 	echo "Usage: $0 -G val -H val -N -O val -P val -S val -c val -d val -i val -n val -p val -r val -s val -u val -v -w val -z val"
 	echo "where:"
 	echo "	-G resource-group-name	name of the Azure resource group (default: \"{owner}-{project}-rg\")"
@@ -229,7 +234,8 @@ _logFile="${_workDir}/${_azureOwner}-${_azureProject}.log"
 #--------------------------------------------------------------------------------
 # Display variable values when output is set to "verbose"...
 #--------------------------------------------------------------------------------
-if [[ "${_outputMode}" = "verbose" ]]; then
+if [[ "${_outputMode}" = "verbose" ]]
+then
 	echo "`date` - DBUG: parameter _rgName is \"${_rgName}\""
 	echo "`date` - DBUG: parameter _skipSaVnetSubnetNsg is \"${_skipSaVnetSubnetNsg}\""
 	echo "`date` - DBUG: parameter _azureOwner is \"${_azureOwner}\""
@@ -266,6 +272,9 @@ if [[ "${_outputMode}" = "verbose" ]]; then
 	echo "`date` - DBUG: variable _oraDataDir is \"${_oraDataDir}\""
 	echo "`date` - DBUG: variable _oraFRADir is \"${_oraFRADir}\""
 	echo "`date` - DBUG: variable _oraRedoSizeMB is \"${_oraRedoSizeMB}\""
+	echo "`date` - DBUG: variable _oraMemPct is \"${_oraMemPct}\""
+	echo "`date` - DBUG: variable _oraMemType is \"${_oraMemType}\""
+	echo "`date` - DBUG: variable _oraFraSzGB is \"${_oraFraSzGB}\""
 fi
 #
 #--------------------------------------------------------------------------------
@@ -650,7 +659,7 @@ ssh ${_azureOwner}@${_ipAddr} "sudo chown ${_oraOsAcct}:${_oraOsGroup} ${_oraDat
 if (( $? != 0 )); then
 	echo "`date` - FAIL: sudo chown ${_oraDataDir} ${_oraFRADir} on ${_vmName}" | tee -a ${_logFile}
 	exit 1
-	fi
+fi
 #
 #--------------------------------------------------------------------------------
 # SSH into the first VM to copy the file "oraInst.loc" from the current Oracle
@@ -696,13 +705,68 @@ ssh ${_azureOwner}@${_ipAddr} "sudo su - ${_oraOsAcct} -c \"\
 		-storageType FS \
 		-datafileDestination ${_oraDataDir} \
 		-enableArchive TRUE \
-		-memoryMgmtType AUTO_SGA \
-		-memoryPercentage 70 \
+		-memoryMgmtType ${_oraMemType} \
+		-memoryPercentage ${_oraMemPct} \
+		-initParams db_create_online_log_dest_1=${_oraFRADir} \
 		-recoveryAreaDestination ${_oraFRADir} \
-		-recoveryAreaSize 40960 \
+		-recoveryAreaSize ${_oraFraSzGB} \
 		-redoLogFileSize ${_oraRedoSizeMB}\"" | tee -a ${_logFile}
 if (( $? != 0 )); then
 	echo "`date` - FAIL: sudo su - ${_oraOsAcct} dbca -createDatabase ${_oraSid} on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Create the "oradata" subdirectory on the temporary disk within the "/mnt/resource"
+# directory of the Linux VM, owned by the Oracle OS account...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: mkdir /mnt/resource/oradata on ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo mkdir /mnt/resource/oradata" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo mkdir /mnt/resource/oradata on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+echo "`date` - INFO: chown ${_oraOsAcct}:${_oraOsGroup} /mnt/resource/oradata on ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo chown ${_oraOsAcct}:${_oraOsGroup} /mnt/resource/oradata" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo chown ${_oraOsAcct}:${_oraOsGroup} /mnt/resource/oradata on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+echo "`date` - INFO: mkdir -p /mnt/resource/oradata on ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo mkdir -p /mnt/resource/oradata" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo mkdir -p /mnt/resource/oradata on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Create a "temporary use" temporary tablespace (named TEMPTMPTEMP), make it
+# default, then drop and recreate the TEMP tablespace on the VM temporary disk,
+# then make TEMP the default and clean up the "temporary use" TEMPTMPTEMP
+# tablespace...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: move TEMP tablespace to temporary disk on ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo su - ${_oraOsAcct} -c \"
+export ORACLE_SID=${_oraSid}
+export ORACLE_HOME=${_oraHome}
+export PATH=${_oraHome}/bin:\${PATH}
+unset TNS_ADMIN
+sqlplus -S -L / as sysdba << __EOF__
+whenever oserror exit failure
+whenever sqlerror exit failure
+alter session set db_create_file_dest='/mnt/resource/oradata';
+create temporary tablespace temptmptemp tempfile size 10M;
+alter database default temporary tablespace temptmptemp;
+drop tablespace temp including contents and datafiles;
+create temporary tablespace temp
+	tempfile size 512M autoextend on next 512M maxsize unlimited
+        extent management local uniform size 1M;
+alter database default temporary tablespace temp;
+drop tablespace temptmptemp including contents and datafiles;
+exit success
+__EOF__\"" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: move TEMP tablespace to temporary disk on ${_vmName}" | tee -a ${_logFile}
 	exit 1
 fi
 #
