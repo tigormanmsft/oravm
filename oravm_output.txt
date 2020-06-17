@@ -1,7 +1,8 @@
 Output generated using these command-line options...
 
 $ ./cr_oravm.sh -v \
-	-S "TIGORMAN-CET subscription" \
+	-S "example subscription" \
+	-O ora \
 	-P example \
 	-i Standard_E2ds_v4 \
 	-n 2 \
