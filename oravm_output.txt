@@ -27,7 +27,7 @@ Tue Jun 16 14:29:45 UTC 2020 - DBUG: parameter _azureRegion is "westus2"
 Tue Jun 16 14:29:45 UTC 2020 - DBUG: parameter _oraSid is "ORCL"
 Tue Jun 16 14:29:45 UTC 2020 - DBUG: parameter _vmUrn is "Oracle:oracle-database-19-3:oracle-db-19300:19.3.0"
 Tue Jun 16 14:29:45 UTC 2020 - DBUG: parameter _vmDataDiskSzGB is "2048"
-Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _progVersion is "0.2"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _progVersion is "0.3"
 Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _workDir is "/home/ora/clouddrive/scripts"
 Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _logFile is "/home/ora/clouddrive/scripts/ora-example.log"
 Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _saName is "oraexamplesa"
@@ -48,6 +48,9 @@ Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _oraMntDir is "/u02"
 Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _oraDataDir is "/u02/oradata"
 Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _oraFRADir is "/u02/orarecv"
 Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _oraRedoSizeMB is "500"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _oraMemPct is "70"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _oraMemType is "AUTO_SGA"
+Tue Jun 16 14:29:45 UTC 2020 - DBUG: variable _oraFraSzGB is "40960"
 Tue Jun 16 14:29:45 UTC 2020 - INFO: az group exists -n ora-example-rg...
 Tue Jun 16 14:29:46 UTC 2020 - INFO: az account set...
 Tue Jun 16 14:29:47 UTC 2020 - INFO: az configure --defaults group location...
@@ -103,4 +106,8 @@ Database Information:
 Global Database Name:ORCL
 System Identifier(SID):ORCL
 Look at the log file "/u01/app/oracle/cfgtoollogs/dbca/ORCL/ORCL.log" for further details.
-Tue Jun 16 14:46:16 UTC 2020 - INFO: completed successfully!
+Tue Jun 16 14:46:16 UTC 2020 - INFO: mkdir /mnt/resource/oradata on ora-example-vm01...
+Tue Jun 16 14:46:17 UTC 2020 - INFO: chown oracle:oinstall /mnt/resource/oradata on ora-example-vm01...
+Tue Jun 16 14:46:18 UTC 2020 - INFO: mkdir -p /mnt/resource/oradata on ora-example-vm01...
+Tue Jun 16 14:46:19 UTC 2020 - INFO: move TEMP tablespace to temporary disk on ora-example-vm01...
+Tue Jun 16 14:46:20 UTC 2020 - INFO: completed successfully!
