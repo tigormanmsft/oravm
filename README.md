@@ -14,23 +14,23 @@ Azure CLI (bash) script to fully automate the creation of an Azure VM to run Ora
 
 ### where:
 
-        -G resource-group-name  name of the Azure resource group (default: \"{owner}-{project}-rg\")"
-        -H ORACLE_HOME          full path of the ORACLE_HOME software (default: /u01/app/oracle/product/12.2.0/dbhome_1)"
-        -N                      skip storage account and network setup i.e. vnet, NSG, NSG rules (default: false)"
-        -O owner-tag            name of the owner to use in Azure tags (no default)"
-        -P project-tag          name of the project to use in Azure tags (no default)"
-        -S subscription         name of the Azure subscription (no default)"
-        -c None|ReadOnly        caching of managed disk for data (default: ReadOnly)"
-        -d domain-name          IP domain name (default: internal.cloudapp.net)"
-        -i instance-type        name of the Azure VM instance type (default: Standard_DS11-1_v2)"
-        -n #data-disks          number of data disks to attach to the VM (default: 1)"
-        -p Oracle-port          port number of the Oracle TNS Listener (default: 1521)"
-        -r region               name of Azure region (default: westus)"
-        -s ORACLE_SID           Oracle System ID (SID) value (default: oradb01)"
-        -u urn                  Azure URN for the VM from the marketplace (default: Oracle:Oracle-Database-Ee:12.2.0.1:12.2.20180725)"
-        -v                      set verbose output is true (default: false)"
-        -w password             clear-text value of initial SYS and SYSTEM password in Oracle database (default: oracleA1)"
-        -z data-disk-GB         size of each attached data-disk in GB (default: 4095)"
+        -G resource-group-name  name of the Azure resource group (default: {owner}-{project}-rg)
+        -H ORACLE_HOME          full path of the ORACLE_HOME software (default: /u01/app/oracle/product/12.2.0/dbhome_1)
+        -N                      skip storage account and network setup i.e. vnet, NSG, NSG rules (default: false)
+        -O owner-tag            name of the owner to use in Azure tags (default: `whoami`)
+        -P project-tag          name of the project to use in Azure tags (default: oravm)
+        -S subscription         name of the Azure subscription (no default)
+        -c None|ReadOnly        caching of managed disk for data (default: ReadOnly)
+        -d domain-name          IP domain name (default: internal.cloudapp.net)
+        -i instance-type        name of the Azure VM instance type (default: Standard_DS11-1_v2)
+        -n #data-disks          number of data disks to attach to the VM (default: 1)
+        -p Oracle-port          port number of the Oracle TNS Listener (default: 1521)
+        -r region               name of Azure region (default: westus)
+        -s ORACLE_SID           Oracle System ID (SID) value (default: oradb01)
+        -u urn                  Azure URN for the VM from the marketplace (default: Oracle:Oracle-Database-Ee:12.2.0.1:12.2.20180725)
+        -v                      set verbose output is true (default: false)
+        -w password             clear-text value of initial SYS and SYSTEM password in Oracle database (default: oracleA1)
+        -z data-disk-GB         size of each attached data-disk in GB (default: 4095)
 
 ### Expected prerequisites:
         1) Azure subscription, specify with "-S" switch, as explained
@@ -51,6 +51,12 @@ Azure CLI (bash) script to fully automate the creation of an Azure VM to run Ora
         4) For users who are expected to use prebuilt storage accounts
            and networking (i.e. vnet, subnet, network security groups, etc),
            consider using the "-N" switch to accept these as prerequisites 
+
+# Important note
+
+If the command-line parameter for the number of dataDisks (i.e. "-n") is set to one or greater (default is "1"), then this script will allocate premium SSD with LRS redundancy.
+
+If the command-line has "-n 0" (i.e. zero data disks) specified, then this script will instead allocate Azure NetApp Files (ANF) storage over NFS v4.1.
 
 # Usage examples
 
