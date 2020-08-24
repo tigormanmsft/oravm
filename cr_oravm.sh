@@ -101,12 +101,13 @@
 #	TGorman	22jun20	fix OsDisk Caching typo
 #	SLuce and TGorman 22jun20 add Azure NetApp Files (ANF) storage for v0.4
 #	TGorman	18aug20	fix minor issues for v0.5
+#	TGorman	24aug20	v0.6 - fix major issues for v0.5
 #================================================================================
 #
 #--------------------------------------------------------------------------------
 # Set global environment variables with default values...
 #--------------------------------------------------------------------------------
-_progVersion="0.5"
+_progVersion="0.6"
 _outputMode="terse"
 _azureOwner="`whoami`"
 _azureProject="oravm"
@@ -482,8 +483,13 @@ if (( $? != 0 )); then
 	echo "`date` - FAIL: az network public-ip show ${_pubIpName}" | tee -a ${_logFile}
 	exit 1
 fi 
-ssh-keygen -f "${HOME}/.ssh/known_hosts" -R ${_ipAddr} >> ${_logFile} 2>&1
 echo "`date` - INFO: public IP ${_ipAddr} for ${_vmName}..." | tee -a ${_logFile}
+#
+#--------------------------------------------------------------------------------
+# Remove any previous entries of the IP address from the "known hosts" config
+# file...
+#--------------------------------------------------------------------------------
+ssh-keygen -f "${HOME}/.ssh/known_hosts" -R ${_ipAddr} >> ${_logFile} 2>&1
 #
 #--------------------------------------------------------------------------------
 # SSH into the first VM to create a directory mount-point for the soon-to-be-created
@@ -499,7 +505,9 @@ fi
 #--------------------------------------------------------------------------------
 # If no data disks are requested on the VM, then deploy Azure NetApp Files...
 #--------------------------------------------------------------------------------
-if (( ${_vmDataDiskNbr} <= 0 )); then
+if (( ${_vmDataDiskNbr} <= 0 ))
+then
+	#
 	echo "`date` - INFO: no data disks requested, Azure NetApp Files it is!" | tee -a ${_logFile}
 	#
 	#--------------------------------------------------------------------------------
@@ -638,10 +646,36 @@ if (( ${_vmDataDiskNbr} <= 0 )); then
 	ssh -o StrictHostKeyChecking=no ${_azureOwner}@${_ipAddr} "\
 		sudo mount -t nfs \
 			-o rw,hard,rsize=65536,wsize=65536,sec=sys,vers=4.1,tcp \
-			${_ANFipAddr}:/${_ANFvolumeName} ${_oraMntDir}"
+			${_ANFipAddr}:/${_ANFvolumeName} ${_oraMntDir}" >> ${_logFile} 2>&1
 	if (( $? != 0 )); then
 		echo "`date` - FAIL: mount ${_ANFvolumeName} on ${_vmName}" | tee -a ${_logFile}
 		exit 1
+	fi
+	#
+	#--------------------------------------------------------------------------------
+	# If there is no entry for the ANF volume in "/etc/fstab" on the Azure VM, then
+	# create an entry to simplify VM restart...
+	#--------------------------------------------------------------------------------
+	_ANFfstabOutput=`ssh ${_azureOwner}@${_ipAddr} "grep \"/${_ANFvolumeName} \" /etc/fstab"`
+	if [[ "${_ANFfstabOutput}" = "" ]]
+	then
+		_ANFmountOutput=`ssh ${_azureOwner}@${_ipAddr} "mount | grep \"/${_ANFvolumeName} \""`
+		if [[ "${_ANFmountOutput}" = "" ]]
+		then
+			echo "`date` - FAIL: output from \"mount\" for ${_ANFvolumeName} on ${_vmName}" | tee -a ${_logFile}
+			exit 1
+		fi
+		_ANFmountOpt=`echo ${_ANFmountOutput} | awk '{print $6}' | sed 's/(//g' | sed 's/)//g'`
+		if [[ "${_ANFmountOpt}" = "" ]]
+		then
+			echo "`date` - FAIL: parse mount options from \"${_ANFmountOutput}\"" | tee -a ${_logFile}
+			exit 1
+		fi
+		ssh ${_azureOwner}@${_ipAddr} "sudo su - root -c \"echo '${_ANFipAddr}:/${_ANFvolumeName} ${_oraMntDir} nfs ${_ANFmountOpt} 0 0' >> /etc/fstab\"" >> ${_logFile} 2>&1
+		if (( $? != 0 )); then
+			echo "`date` - FAIL: append \"${_ANFvolumeName}\" to \"/etc/fstab\" on ${_vmName}" | tee -a ${_logFile}
+			exit 1
+		fi
 	fi
 	#
 else # ...else if _nbrDataDisks > 0, then use managed disks for database storage...
@@ -842,7 +876,7 @@ fi
 # SSH into the first VM to run the Oracle Database Creation Assistant (DBCA)
 # program to create a new primary Oracle database...
 #--------------------------------------------------------------------------------
-echo "`date` - INFO: dbca -createDatabase ${_oraSid} on ${_vmName1} (be prepared - long wait)..." | tee -a ${_logFile}
+echo "`date` - INFO: dbca -createDatabase ${_oraSid} on ${_vmName} (be prepared - long wait)..." | tee -a ${_logFile}
 ssh ${_azureOwner}@${_ipAddr} "sudo su - ${_oraOsAcct} -c \"\
 	export ORACLE_SID=${_oraSid}
 	export ORACLE_HOME=${_oraHome}
@@ -864,9 +898,9 @@ ssh ${_azureOwner}@${_ipAddr} "sudo su - ${_oraOsAcct} -c \"\
 		-initParams db_create_online_log_dest_1=${_oraFRADir} \
 		-recoveryAreaDestination ${_oraFRADir} \
 		-recoveryAreaSize ${_oraFraSzGB} \
-		-redoLogFileSize ${_oraRedoSizeMB}\"" | tee -a ${_logFile}
+		-redoLogFileSize ${_oraRedoSizeMB}\"" >> ${_logFile} 2>&1
 if (( $? != 0 )); then
-	echo "`date` - FAIL: sudo su - ${_oraOsAcct} dbca -createDatabase ${_oraSid} on ${_vmName}" | tee -a ${_logFile}
+	echo "`date` - FAIL: dbca -createDatabase ${_oraSid} on ${_vmName}" | tee -a ${_logFile}
 	exit 1
 fi
 #
@@ -905,18 +939,87 @@ whenever sqlerror exit failure
 alter session set db_create_file_dest='/mnt/resource/oradata';
 create temporary tablespace temptmptemp tempfile size 10M;
 alter database default temporary tablespace temptmptemp;
-host sleep 5
+shutdown immediate
+startup
 drop tablespace temp including contents and datafiles;
+alter session set db_create_file_dest='/mnt/resource/oradata';
 create temporary tablespace temp
 	tempfile size 512M autoextend on next 512M maxsize unlimited
         extent management local uniform size 1M;
 alter database default temporary tablespace temp;
-host sleep 5
-drop tablespace temptmptemp including contents and datafiles;
 exit success
 __EOF__\"" >> ${_logFile} 2>&1
 if (( $? != 0 )); then
 	echo "`date` - FAIL: move TEMP tablespace to temporary disk on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+ssh ${_azureOwner}@${_ipAddr} "sudo su - ${_oraOsAcct} -c \"
+export ORACLE_SID=${_oraSid}
+export ORACLE_HOME=${_oraHome}
+export PATH=${_oraHome}/bin:\${PATH}
+unset TNS_ADMIN
+sqlplus -S -L / as sysdba << __EOF__
+whenever oserror exit failure
+whenever sqlerror exit failure
+drop tablespace temptmptemp including contents and datafiles;
+exit success
+__EOF__\"" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: drop TEMPTMPTEMP tablespace disk on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Create a helpful shell script named "orareboot.sh" in the "/root" directory on
+# the VM.  This script will recreate the "/mnt/resource/oradata" directory with
+# the correct ownership and permissions and will also remount "/u02" if it isn't
+# currently mounted...
+#--------------------------------------------------------------------------------
+_scriptFile=/tmp/.${_azureOwner}_${_azureProject}_$$.tmp
+rm -f ${_scriptFile}
+if (( $? != 0 ))
+then
+	echo "`date` - FAIL: \"rm -f ${_scriptFile}\"" | tee -a ${_logFile}
+	exit 1
+fi
+echo "#!/bin/bash"					 > ${_scriptFile}
+echo "#"						>> ${_scriptFile}
+echo "_tempFilesDir=\"/mnt/resource/oradata\""		>> ${_scriptFile}
+echo "_nfsMntPt=\"${_oraMntDir}\""			>> ${_scriptFile}
+echo "#"						>> ${_scriptFile}
+echo "if [ ! -d \${_tempFilesDir} ]"			>> ${_scriptFile}
+echo "then"						>> ${_scriptFile}
+echo "	mkdir \${_tempFilesDir}"			>> ${_scriptFile}
+echo "	chown oracle:oinstall \${_tempFilesDir}"	>> ${_scriptFile}
+echo "	chmod 775 \${_tempFilesDir}"			>> ${_scriptFile}
+echo "	ls -ld \${_tempFilesDir}"			>> ${_scriptFile}
+echo "else"						>> ${_scriptFile}
+echo "	echo \"\${_tempFilesDir} exists\""		>> ${_scriptFile}
+echo "fi"						>> ${_scriptFile}
+echo "#"						>> ${_scriptFile}
+echo "if [[ \"\`mount | grep \\\" \${_nfsMntPt} \\\"\`\" = \"\" ]]"	>> ${_scriptFile}
+echo "then"						>> ${_scriptFile}
+echo "	mount \${_nfsMntPt}"				>> ${_scriptFile}
+echo "	df -h \${_nfsMntPt}"				>> ${_scriptFile}
+echo "else"						>> ${_scriptFile}
+echo "	echo \"\${_nfsMntPt} mounted\""			>> ${_scriptFile}
+echo "fi"						>> ${_scriptFile}
+chmod 755 ${_scriptFile}
+if (( $? != 0 ))
+then
+	echo "`date` - FAIL: \"chmod 755 ${_scriptFile}\"" | tee -a ${_logFile}
+	exit 1
+fi
+scp ${_scriptFile} ${_azureOwner}@${_ipAddr}:/tmp/orareboot.sh >> ${_logFile} 2>&1
+if (( $? != 0 ))
+then
+	echo "`date` - FAIL: \"scp ${_scriptFile} ${_azureOwner}@${_ipAddr}:/tmp/orareboot.sh\"" | tee -a ${_logFile}
+	exit 1
+fi
+ssh ${_azureOwner}@${_ipAddr} "sudo mv /tmp/orareboot.sh /root" >> ${_logFile} 2>&1
+if (( $? != 0 ))
+then
+	echo "`date` - FAIL: \"sudo mv /tmp/orareboot.sh /root\" on ${_vmName}" | tee -a ${_logFile}
 	exit 1
 fi
 #
