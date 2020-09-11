@@ -5,8 +5,26 @@ Azure CLI (bash) script to fully automate the creation of an Azure VM to run Ora
 
       Script to automate the creation of an Oracle database on a marketplace
       Oracle image within Microsoft Azure, using the Azure CLI.
+      
+## Examples of script usage
 
-## Command-line Parameters:
+First of all, the "cr_oravm.sh" script expects to do all of its work within an Azure subscription and an Azure resource group.
+
+The name of the Azure subscription has no default value, so the "-S" command-line switch followed by the name of the Azure subscription (possibly enclosed within double-quotes if the subscription name includes spaces) is always required...
+
+    $ ./cr_oravm.sh -S MySubscriptionName
+
+The name of the Azure resource group defaults to "{owner}-{project}-rg", where "{owner}" is the name of the OS account in which the script is being executed (i.e. output from "whoami" command) and "{project}" defaults to the string "oravm".  The "{owner}-{project}" string combination is used a lot within the script for naming objects like resource groups, VMs, storage, PPGs, etc.  So with this minimal call syntax, where only the name of the Azure subscription is specified, will result in the script expecting a resource group to already exist with the name of "{owner}-oravm-rg", where "{owner}" is the OS account name of the Azure CLI shell running the script.  For example, when the author uses "https://shell.azure.com", the resulting OS account name is "tim", so using this minimal call syntax for the "cr_oravm.sh" script means that it expects an Azure resource group named "tim-oravm-rg" to exist already, and it will create about 7-9 Azure objects with a prefix of "tim-oravm-".  If you don't want the resource group to be required to have this name, then both these basic values can be changed from the defaults using the "-O" and "-P" command-line switches, respectively...
+
+    $ ./cr_oravm.sh -S MySubscriptionName -O test -P foobar
+
+As a result, the name of the resource group will be expected to be "test-foobar-rg", and all of the Azure objects created within the resource group will also be named with the prefix string of "test-foobar-".  If the name of the resource group is something else (i.e. "MyResourceGroupName") but you'd like all of the objects created by the script to start with the prefix string "test-foobar-", then you can use the following call syntax...
+
+    $ ./cr_oravm.sh -S MySubscriptionName -R MyResourceGroupName -O test -P foobar
+
+As a result, the precreated resource group named "MyResourceGroupName" within the existing "MySubscriptionName" subscription will be populated with objects with names like "test-foobar-vm01", "test-foobar-vnet", "test-foobar-vnet", etc.
+
+Please see the next section for a complete list of all of the command-line switches, what they control, and default values...
 
 ## Usage:
 
