@@ -929,6 +929,7 @@ ssh ${_azureOwner}@${_ipAddr} "sudo su - ${_oraOsAcct} -c \"\
                 -storageType FS \
                 -datafileDestination ${_oraDataDir} \
                 -enableArchive TRUE \
+                -sampleSchema TRUE \
                 -memoryMgmtType ${_oraMemType} \
                 -memoryPercentage ${_oraMemPct} \
                 -initParams db_create_online_log_dest_1=${_oraFRADir} \
