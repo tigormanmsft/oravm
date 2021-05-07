@@ -38,23 +38,25 @@
 #
 # Command-line Parameters:
 #
-#	Usage: ./cr_oravm.sh -G val -H val -N -O val -P val -S val -c val -d val -i val -n val -r val -u val -v -w val -z val
+#	Usage: ./cr_oravm.sh -G val -H val -N -O val -P val -S val -c val -d val -i val -n val -p val -r val -s val -u val -v -w val -z val
 #
 #	where:
 #		-G resource-group-name	name of the Azure resource group (default: \"{owner}-{project}-rg\")
 #		-H ORACLE_HOME		full path of ORACLE_HOME software (default: /u01/app/oracle/product/19.0.0/dbhome_1)
-#		-N                skip storage account and network setup i.e. vnet, NSG, NSG rules (default: false)
-#		-O owner-tag      name of the owner to use in Azure tags (default: Linux 'whoami')
+#		-N			skip network setup i.e. vnet, NSG, NSG rules (default: false)
+#		-O owner-tag		name of the owner to use in Azure tags (default: Linux 'whoami')
 #		-P project-tag		name of the project to use in Azure tags (default: oravm)
 #		-S subscription		name of the Azure subscription (no default)
-#		-c True|False		  True is ReadWrite for OS / ReadOnly for data, False is None (default: True)
+#		-c True|False		True is ReadWrite for OS / ReadOnly for data, False is None (default: True)
 #		-d domain-name		IP domain name (default: internal.cloudapp.net)
-#		-i instance-type	name of the Azure VM instance type (default: Standard_D2s_v4)
+#		-i instance-type	name of the Azure VM instance type (default: Standard_D4ds_v4)
 #		-n #data-disks		number of data disks to attach to the VM (default: 1)
-#		-r region		      name of Azure region (default: westus)
-#		-u urn			      Azure URN for the VM from the marketplace (default: Oracle:oracle-database-19-3:oracle-database-19-0904:19.3.1)
-#		-v			          set verbose output is true (default: false)
-#		-w password		    clear-text value of initial SYS and SYSTEM password in Oracle database (default: oracleA1)
+#		-p Oracle-port		port number of the Oracle TNS Listener (default: 1521)
+#		-r region		name of Azure region (default: westus)
+#		-s ORACLE_SID		Oracle System ID (SID) value (default: oradb01)
+#		-u urn			Azure URN for the VM from the marketplace (default: Oracle:oracle-database-19-3:oracle-database-19-0904:19.3.1)
+#		-v			set verbose output is true (default: false)
+#		-w password		clear-text value of initial SYS and SYSTEM password in Oracle database (default: oracleA1)
 #		-z data-disk-GB		size of each attached data-disk in GB (default: 4095)
 #
 # Expected command-line output:
@@ -83,9 +85,9 @@
 #	5) Use the "-v" (verbose) switch to verify that program variables
 #	   have the expected values
 #
-#	6) For users who are expected to use prebuilt storage accounts
-#	   and networking (i.e. vnet, subnet, network security groups, etc),
-#	   consider using the "-N" switch to accept these as prerequisites 
+#	6) For users who are expected to use prebuilt networking (i.e. vnet,
+#	   subnet, network security groups, etc), please consider using the
+#	   "-N" switch
 #
 #	Please be aware that Azure owner (i.e. "-O") and Azure project (i.e. "-P")
 #	are used to generate names for the Azure resource group, storage
@@ -96,33 +98,35 @@
 #	TGorman	23apr20	v0.1	written
 #	TGorman	15jun20 v0.2	various bug fixes
 #	TGorman	16jun20 v0.3	move TEMP to temporary/ephemeral disk
-#	TGorman	22jun20		    fix OsDisk Caching typo
+#	TGorman	22jun20		fix OsDisk Caching typo
 #	SLuce and TGorman 22jun20 v0.4	add Azure NetApp Files (ANF) storage
 #	TGorman	18aug20	v0.5	fix minor issues
 #	TGorman	24aug20	v0.6	fix major issues for v0.5
 #	TGorman	17nov20	v0.7	update to default 19c VM image from marketplace
 #	TGorman	27jan21 v0.8	accelerated networking TRUE at NIC creation and
-#		                		defaulted VM instance type to "Standard_D2s_v4"
+#				defaulted VM instance type to "Standard_D4ds_v4"
 #	TGorman	03mar21	v0.9	remove NSG rule default-all-ssh open to internet,
-#			                	add NSG rule ssh-cloud-shell open only to Azure
-#				                Cloud service tag.  Also add "yum update" to
-#				                ensure that everything is up-to-date...
+#				add NSG rule ssh-cloud-shell open only to Azure
+#				Cloud service tag.  Also add "yum update" to
+#				ensure that everything is up-to-date...
+#	TGorman	26apr21	v1.0	set waagent.conf to rebuild swapfile after reboot
+#				and perform 2nd "yum update"
 #================================================================================
 #
 #--------------------------------------------------------------------------------
 # Set global environment variables with default values...
 #--------------------------------------------------------------------------------
-_progVersion="0.9"
+_progVersion="1.0"
 _outputMode="terse"
 _azureOwner="`whoami`"
 _azureProject="oravm"
 _azureRegion="westus"
 _azureSubscription=""
 _workDir="`pwd`"
-_skipSaVnetSubnetNsg="false"
+_skipVnetSubnetNsg="false"
 _vmUrn="Oracle:oracle-database-19-3:oracle-database-19-0904:19.3.1"
 _vmDomain="internal.cloudapp.net"
-_vmInstanceType="Standard_D2ds_v4"
+_vmInstanceType="Standard_D4ds_v4"
 _vmOsDiskSize="32"
 _vmOsDiskCaching="ReadWrite"
 _vmDataDiskCaching="ReadOnly"
@@ -147,10 +151,9 @@ _oraMemType="AUTO_SGA"
 _oraFraSzGB=40960
 typeset -i _scsiDevNbr=24
 declare -a _scsiDevList=("", "sdc" "sdd" "sde" "sdf" "sdg" "sdh" \
-                             "sdi" "sdj" "sdk" "sdl" "sdm" "sdn" \
-                             "sdo" "sdp" "sdq" "sdr" "sds" "sdt" \
-                             "sdu" "sdv" "sdw" "sdx" "sdy" "sdz")
-_saName="${_azureOwner}${_azureProject}sa"
+			     "sdi" "sdj" "sdk" "sdl" "sdm" "sdn" \
+			     "sdo" "sdp" "sdq" "sdr" "sds" "sdt" \
+			     "sdu" "sdv" "sdw" "sdx" "sdy" "sdz")
 _rgName="${_azureOwner}-${_azureProject}-rg"
 _realRgName=""
 _vnetName="${_azureOwner}-${_azureProject}-vnet"
@@ -174,7 +177,7 @@ do
 	case "${OPTNAME}" in
 		G)	_realRgName="${OPTARG}"		;;
 		H)	_oraHome="${OPTARG}"		;;
-		N)	_skipSaVnetSubnetNsg="true"	;;
+		N)	_skipVnetSubnetNsg="true"	;;
 		O)	_azureOwner="${OPTARG}"		;;
 		P)	_azureProject="${OPTARG}"	;;
 		S)	_azureSubscription="${OPTARG}"	;;
@@ -214,13 +217,13 @@ then
 	echo "where:"
 	echo "	-G resource-group-name	name of the Azure resource group (default: \"{owner}-{project}-rg\")"
 	echo "	-H ORACLE_HOME		full path of the ORACLE_HOME software (default: /u01/app/oracle/product/19.0.0/dbhome_1)"
-	echo "	-N			skip storage account and network setup i.e. vnet, NSG, NSG rules (default: false)"
+	echo "	-N			skip network setup i.e. vnet, NSG, NSG rules (default: false)"
 	echo "	-O owner-tag		name of the owner to use in Azure tags (default: Linux 'whoami')"
 	echo "	-P project-tag		name of the project to use in Azure tags (no default)"
 	echo "	-S subscription		name of the Azure subscription (no default)"
 	echo "	-c True|False		True is ReadWrite for OS / ReadOnly for data, False is None (default: True)"
 	echo "	-d domain-name		IP domain name (default: internal.cloudapp.net)"
-	echo "	-i instance-type	name of the Azure VM instance type (default: Standard_D2s_v4)"
+	echo "	-i instance-type	name of the Azure VM instance type (default: Standard_D4ds_v4)"
 	echo "	-n #data-disks		number of data disks to attach to the VM (default: 1)"
 	echo "	-p Oracle-port		port number of the Oracle TNS Listener (default: 1521)"
 	echo "	-r region		name of Azure region (default: westus)"
@@ -241,7 +244,6 @@ then
 else
 	_rgName="${_azureOwner}-${_azureProject}-rg"
 fi
-_saName="${_azureOwner}${_azureProject}sa"
 _vnetName="${_azureOwner}-${_azureProject}-vnet"
 _subnetName="${_azureOwner}-${_azureProject}-subnet"
 _nsgName="${_azureOwner}-${_azureProject}-nsg"
@@ -260,7 +262,7 @@ _ANFsubnetName="${_azureOwner}-${_azureProject}-anfnet"
 if [[ "${_outputMode}" = "verbose" ]]
 then
 	echo "`date` - DBUG: parameter _rgName is \"${_rgName}\""
-	echo "`date` - DBUG: parameter _skipSaVnetSubnetNsg is \"${_skipSaVnetSubnetNsg}\""
+	echo "`date` - DBUG: parameter _skipVnetSubnetNsg is \"${_skipVnetSubnetNsg}\""
 	echo "`date` - DBUG: parameter _azureOwner is \"${_azureOwner}\""
 	echo "`date` - DBUG: parameter _azureProject is \"${_azureProject}\""
 	echo "`date` - DBUG: parameter _azureSubscription is \"${_azureSubscription}\""
@@ -277,7 +279,6 @@ then
 	echo "`date` - DBUG: variable _progVersion is \"${_progVersion}\""
 	echo "`date` - DBUG: variable _workDir is \"${_workDir}\""
 	echo "`date` - DBUG: variable _logFile is \"${_logFile}\""
-	echo "`date` - DBUG: variable _saName is \"${_saName}\""
 	echo "`date` - DBUG: variable _vnetName is \"${_vnetName}\""
 	echo "`date` - DBUG: variable _subnetName is \"${_subnetName}\""
 	echo "`date` - DBUG: variable _nsgName is \"${_nsgName}\""
@@ -351,22 +352,7 @@ fi
 # If the user elected to skip the creation of vnet, the NIC, the NSG, and the
 # rules...
 #--------------------------------------------------------------------------------
-if [[ "${_skipSaVnetSubnetNsg}" = "false" ]]; then
-	#
-	#------------------------------------------------------------------------
-	# Create an Azure storage account for this project...
-	#------------------------------------------------------------------------
-	echo "`date` - INFO: az storage account create ${_saName}..." | tee -a ${_logFile}
-	az storage account create \
-		--name ${_saName} \
-		--sku Standard_LRS \
-		--access-tier Hot \
-		--tags owner=${_azureOwner} project=${_azureProject} \
-		--verbose >> ${_logFile} 2>&1
-	if (( $? != 0 )); then
-		echo "`date` - FAIL: ${_azureProject} - az storage account create ${_saName}" | tee -a ${_logFile}
-		exit 1
-	fi
+if [[ "${_skipVnetSubnetNsg}" = "false" ]]; then
 	#
 	#------------------------------------------------------------------------
 	# Create an Azure virtual network for this project...
@@ -400,7 +386,7 @@ if [[ "${_skipSaVnetSubnetNsg}" = "false" ]]; then
 	#------------------------------------------------------------------------
 	# Create a custom Azure network security group rule to permit SSH access...
 	#------------------------------------------------------------------------
-	echo "`date` - INFO: az network nsg rule create default-all-ssh..." | tee -a ${_logFile}
+	echo "`date` - INFO: az network nsg rule create ssh-cloud-shell..." | tee -a ${_logFile}
 	az network nsg rule create \
 		--name ssh-cloud-shell \
 		--nsg-name ${_nsgName} \
@@ -491,6 +477,19 @@ fi
 echo "`date` - INFO: public IP ${_ipAddr} for ${_vmName}..." | tee -a ${_logFile}
 #
 #--------------------------------------------------------------------------------
+# Obtain the private IP addresses for future use within the script...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: az network nic show ${_nicName}..." | tee -a ${_logFile}
+_privateIp=`az network nic show --name ${_nicName} | \
+	    jq '.ipConfigurations[0] .privateIpAddress' | \
+	    sed 's/"//g'`
+if (( $? != 0 )); then
+	echo "`date` - FAIL: az network nic show ${_nicName}" | tee -a ${_logFile}
+	exit 1
+fi 
+echo "`date` - INFO: private IP ${_privateIp} for ${_vmName}..." | tee -a ${_logFile}
+#
+#--------------------------------------------------------------------------------
 # Remove any previous entries of the IP address from the "known hosts" config
 # file...
 #--------------------------------------------------------------------------------
@@ -530,7 +529,7 @@ then
 	fi
 	#
 	#--------------------------------------------------------------------------------
-	## Create Azure NetApp Files Delegated Subnet
+	# Create Azure NetApp Files Delegated Subnet
 	#--------------------------------------------------------------------------------
 	echo "`date` - INFO: az network vnet subnet create ${_ANFsubnetName}..." | tee -a ${_logFile}
 	az network vnet subnet create \
@@ -545,7 +544,7 @@ then
 	fi
 	#
 	#--------------------------------------------------------------------------------
-	## Create the Azure NetApp Files (ANF) NetApp Account
+	# Create the Azure NetApp Files (ANF) NetApp Account
 	#--------------------------------------------------------------------------------
 	echo "`date` - INFO: az netappfiles account create ${_ANFaccountName}..." | tee -a ${_logFile}
 	az netappfiles account create \
@@ -558,7 +557,7 @@ then
 	fi
 	#
 	#--------------------------------------------------------------------------------
-	## Create the ANF Capacity Pool
+	# Create the ANF Capacity Pool
 	#--------------------------------------------------------------------------------
 	echo "`date` - INFO: az netappfiles pool create ${_ANFpoolName}..." | tee -a ${_logFile}
 	az netappfiles pool create \
@@ -574,7 +573,7 @@ then
 	fi
 	#
 	#--------------------------------------------------------------------------------
-	## Create the ANF Volume
+	# Create the ANF Volume
 	#--------------------------------------------------------------------------------
 	echo "`date` - INFO: az netappfiles volume create ${_ANFvolumeName}..." | tee -a ${_logFile}
 	az netappfiles volume create \
@@ -582,10 +581,13 @@ then
 		--pool-name ${_ANFpoolName} \
 		--volume-name ${_ANFvolumeName} \
 		--file-path ${_ANFvolumeName}\
-		--usage-threshold 500 \
+		--usage-threshold 4096 \
 		--vnet ${_vnetName} \
 		--subnet ${_ANFsubnetName} \
 		--protocol-types NFSv4.1 \
+		--kerberos-enabled false \
+		--allowed-clients ${_privateIp} \
+		--rule-index 1 \
 		--verbose >> ${_logFile} 2>&1
 	if (( $? != 0 )); then
 		echo "`date` - FAIL: az netappfiles volume create ${_ANFvolumeName}" | tee -a ${_logFile}
@@ -593,7 +595,7 @@ then
 	fi
 	#
 	#--------------------------------------------------------------------------------
-	## Add a rule to the NFS export policy for our VM at index 2
+	# Add a rule to the NFS export policy for our VM at index 2
 	#--------------------------------------------------------------------------------
 	echo "`date` - INFO: az netappfiles volume export-policy create for ${_privateipAddr}..." | tee -a ${_logFile}
 	az netappfiles volume export-policy add \
@@ -614,7 +616,7 @@ then
 	fi
 	#
 	#--------------------------------------------------------------------------------
-	## Remove the default rule from the volume export policy at index 1
+	# Remove the default rule from the volume export policy at index 1
 	#--------------------------------------------------------------------------------
 	echo "`date` - INFO: az netappfiles volume export-policy remove for 0.0.0.0/0..." | tee -a ${_logFile}
 	az netappfiles volume export-policy remove \
@@ -629,7 +631,7 @@ then
 	fi
 	#
 	#--------------------------------------------------------------------------------
-	## Get the Azure NetApp Files endpoint IP address
+	# Get the Azure NetApp Files endpoint IP address
 	#--------------------------------------------------------------------------------
 	echo "`date` - INFO: az netappfiles volume show ${_ANFvolumeName}..." | tee -a ${_logFile}
 	_ANFipAddr=`az netappfiles volume show \
@@ -642,6 +644,7 @@ then
 		echo "`date` - FAIL: az netappfiles volume show ${_ANFvolumeName}" | tee -a ${_logFile}
 		exit 1
 	fi
+	echo "`date` - INFO: IP ${_ANFipAddr} for volume ${_ANFvolumeName}..." | tee -a ${_logFile}
 	#
 	#--------------------------------------------------------------------------------
 	# SSH into the first VM to mount the newly created Azure NetApp Files
@@ -650,7 +653,7 @@ then
 	echo "`date` - INFO: mount ${_ANFvolumeName} on ${_vmName}..." | tee -a ${_logFile}
 	ssh -o StrictHostKeyChecking=no ${_azureOwner}@${_ipAddr} "\
 		sudo mount -t nfs \
-			-o rw,hard,rsize=65536,wsize=65536,sec=sys,vers=3,tcp \
+			-o rw,hard,rsize=1048576,wsize=1048576,sec=sys,vers=4.1,tcp \
 			${_ANFipAddr}:/${_ANFvolumeName} ${_oraMntDir}" >> ${_logFile} 2>&1
 	if (( $? != 0 )); then
 		echo "`date` - FAIL: mount ${_ANFvolumeName} on ${_vmName}" | tee -a ${_logFile}
@@ -869,6 +872,45 @@ else # ...else if _nbrDataDisks > 0, then use managed disks for database storage
 fi
 #
 #------------------------------------------------------------------------
+# SSH into the VM to determine how much physical RAM there is and then
+# use the RHEL7 formula to determine needed swap space, and then configure
+# the Azure Linux agent (waagent) to recreate upon boot...
+#------------------------------------------------------------------------
+echo "`date` - INFO: free -m to find physical RAM on ${_vmName}..." | tee -a ${_logFile}
+typeset -i _ramMB=`ssh ${_azureOwner}@${_ipAddr} "free -m | grep '^Mem:' | awk '{print \\\$2}'" 2>&1`
+if (( $? != 0 )); then
+	echo "`date` - FAIL: free -m on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+if [[ "${_ramMB}" = "" ]]
+then
+	echo "`date` - FAIL: free -m returned NULL on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+if (( ${_ramMB} <= 2048 ))			# when RAM less than 2GB then...
+then						# ...swap = double RAM
+	typeset -i _swapMB=${_ramMB}*2
+else
+	if (( ${_ramMB} <= 8192 ))		# when RAM less than 8GB then...
+	then					# ...swap = RAM
+		typeset -i _swapMB=${_ramMB}
+	else
+		if (( ${_ramMB} <= 43690 ))	# when RAM between 8-64GB then...
+		then				# ...swap = RAM * 1.5
+			typeset -i _swapMB=`echo ${_ramMB} | awk '{printf("%d\n",$1*1.5)}'`
+		else				# otherwise...
+			typeset -i _swapMB=65536 # ...swap no larger than 64GB
+		fi
+	fi
+fi
+echo "`date` - INFO: configure waagent for ${_swapMB}M swap on ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo sed -i.old -e 's/^ResourceDisk.EnableSwap=n$/ResourceDisk.EnableSwap=y/' -e 's/^ResourceDisk.SwapSizeMB=0$/ResourceDisk.SwapSizeMB='${_swapMB}'/' /etc/waagent.conf" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo sed /etc/waagent.conf on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#------------------------------------------------------------------------
 # SSH into first VM to create sub-directories for the Oracle database
 # files and for the Oracle Flash Recovery Area (FRA) files...
 #------------------------------------------------------------------------
@@ -916,10 +958,21 @@ fi
 #--------------------------------------------------------------------------------
 # Perform an update of all OS packages to be sure that all are up-to-date...
 #--------------------------------------------------------------------------------
-echo "`date` - INFO: yum update -y on ${_vmName} (be prepared - long wait)..." | tee -a ${_logFile}
+echo "`date` - INFO: yum update on ${_vmName} (1: be prepared - long wait)..." | tee -a ${_logFile}
 ssh ${_azureOwner}@${_ipAddr} "sudo yum update -y" >> ${_logFile} 2>&1
 if (( $? != 0 )); then
-	echo "`date` - FAIL: sudo yum update -y on ${_vmName}" | tee -a ${_logFile}
+	echo "`date` - FAIL: sudo yum update #1 on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Now, perform another update of all OS packages, because often the first update
+# doesn't get all of them...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: 2nd yum update on ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo yum update -y" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo yum update #2 on ${_vmName}" | tee -a ${_logFile}
 	exit 1
 fi
 #
@@ -996,7 +1049,7 @@ drop tablespace temp including contents and datafiles;
 alter session set db_create_file_dest='/mnt/resource/oradata';
 create temporary tablespace temp
 	tempfile size 512M autoextend on next 512M maxsize unlimited
-        extent management local uniform size 1M;
+	extent management local uniform size 1M;
 alter database default temporary tablespace temp;
 exit success
 __EOF__\"" >> ${_logFile} 2>&1
