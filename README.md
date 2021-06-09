@@ -5,6 +5,10 @@ Azure CLI (bash) script to fully automate the creation of an Azure VM to run Ora
 
       Script to automate the creation of an Oracle database on a marketplace
       Oracle image within Microsoft Azure, using the Azure CLI.
+
+      In addition to creating the VM with either managed disk or Azure NetApp Files storage,
+      and an Oracle database on that VM, the script will also allocate an Azure Files share
+      for archived redo log files, and enable Azure VM Backup.
       
 ## Examples of script usage
 
