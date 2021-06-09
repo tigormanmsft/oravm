@@ -111,12 +111,15 @@
 #				ensure that everything is up-to-date...
 #	TGorman	26apr21	v1.0	set waagent.conf to rebuild swapfile after reboot
 #				and perform 2nd "yum update"
+#	TGorman	03jun21	v1.1	Enable Azure VM Backup on resident Oracle db,
+#				attach Azure Files standard share for archived
+#				redo log file storage
 #================================================================================
 #
 #--------------------------------------------------------------------------------
 # Set global environment variables with default values...
 #--------------------------------------------------------------------------------
-_progVersion="1.0"
+_progVersion="1.1"
 _outputMode="terse"
 _azureOwner="`whoami`"
 _azureProject="oravm"
@@ -143,6 +146,7 @@ _oraCharSet="WE8ISO8859P15"
 _oraMntDir="/u02"
 _oraDataDir="${_oraMntDir}/oradata"
 _oraFRADir="${_oraMntDir}/orarecv"
+_oraArchDir="/backup"
 _oraSysPwd=oracleA1
 _oraRedoSizeMB=4096
 _oraLsnrPort=1521
@@ -162,6 +166,11 @@ _nsgName="${_azureOwner}-${_azureProject}-nsg"
 _nicName="${_azureOwner}-${_azureProject}-nic01"
 _pubIpName="${_azureOwner}-${_azureProject}-public-ip01"
 _vmName="${_azureOwner}-${_azureProject}-vm01"
+_saName="${_azureOwner}${_azureProject}sa01"
+_shareName="${_azureOwner}-${_azureProject}-share01"
+_vaultName="${_azureOwner}-${_azureProject}-vault01"
+_policyName="${_azureOwner}-${_azureProject}-policy01"
+_workloadConfFile=/tmp/workload_conf_$$.tmp
 _logFile="${_workDir}/${_azureOwner}-${_azureProject}.log"
 _ANFaccountName="${_azureOwner}-${_azureProject}-naa"
 _ANFpoolName="${_azureOwner}-${_azureProject}-pool"
@@ -250,6 +259,10 @@ _nsgName="${_azureOwner}-${_azureProject}-nsg"
 _nicName="${_azureOwner}-${_azureProject}-nic01"
 _pubIpName="${_azureOwner}-${_azureProject}-public-ip01"
 _vmName="${_azureOwner}-${_azureProject}-vm01"
+_saName="${_azureOwner}${_azureProject}sa01"
+_shareName="${_azureOwner}-${_azureProject}-share01"
+_vaultName="${_azureOwner}-${_azureProject}-vault01"
+_policyName="${_azureOwner}-${_azureProject}-policy01"
 _logFile="${_workDir}/${_azureOwner}-${_azureProject}.log"
 _ANFaccountName="${_azureOwner}-${_azureProject}-naa"
 _ANFpoolName="${_azureOwner}-${_azureProject}-pool"
@@ -285,6 +298,10 @@ then
 	echo "`date` - DBUG: variable _nicName is \"${_nicName}\""
 	echo "`date` - DBUG: variable _pubIpName is \"${_pubIpName}\""
 	echo "`date` - DBUG: variable _vmName is \"${_vmName}\""
+	echo "`date` - DBUG: variable _saName is \"${_saName}\""
+	echo "`date` - DBUG: variable _shareName is \"${_shareName}\""
+	echo "`date` - DBUG: variable _vaultName is \"${_vaultName}\""
+	echo "`date` - DBUG: variable _policyName is \"${_policyName}\""
 	echo "`date` - DBUG: variable _vmOsDiskSize is \"${_vmOsDiskSize}\""
 	echo "`date` - DBUG: variable _vmOsDiskCaching is \"${_vmOsDiskCaching}\""
 	echo "`date` - DBUG: variable _vgName is \"${_vgName}\""
@@ -296,6 +313,7 @@ then
 	echo "`date` - DBUG: variable _oraMntDir is \"${_oraMntDir}\""
 	echo "`date` - DBUG: variable _oraDataDir is \"${_oraDataDir}\""
 	echo "`date` - DBUG: variable _oraFRADir is \"${_oraFRADir}\""
+	echo "`date` - DBUG: variable _oraArchDir is \"${_oraArchDir}\""
 	echo "`date` - DBUG: variable _oraRedoSizeMB is \"${_oraRedoSizeMB}\""
 	echo "`date` - DBUG: variable _oraMemPct is \"${_oraMemPct}\""
 	echo "`date` - DBUG: variable _oraMemType is \"${_oraMemType}\""
@@ -384,7 +402,8 @@ if [[ "${_skipVnetSubnetNsg}" = "false" ]]; then
 	fi
 	#
 	#------------------------------------------------------------------------
-	# Create a custom Azure network security group rule to permit SSH access...
+	# Create a custom Azure network security group rule to permit SSH access
+	# over port 22...
 	#------------------------------------------------------------------------
 	echo "`date` - INFO: az network nsg rule create ssh-cloud-shell..." | tee -a ${_logFile}
 	az network nsg rule create \
@@ -400,6 +419,27 @@ if [[ "${_skipVnetSubnetNsg}" = "false" ]]; then
 		--verbose >> ${_logFile} 2>&1
 	if (( $? != 0 )); then
 		echo "`date` - FAIL: az network nsg rule create ssh-cloud-shell" | tee -a ${_logFile}
+		exit 1
+	fi
+	#
+	#------------------------------------------------------------------------
+	# Create a custom Azure network security group rule to permit SMB (CIFS)
+	# access over port 445...
+	#------------------------------------------------------------------------
+	echo "`date` - INFO: az network nsg rule create smb-cloud-shell..." | tee -a ${_logFile}
+	az network nsg rule create \
+		--name smb-cloud-shell \
+		--nsg-name ${_nsgName} \
+		--priority 1010 \
+		--direction Inbound \
+		--protocol TCP \
+		--source-address-prefixes AzureCloud \
+		--destination-address-prefixes \* \
+		--destination-port-ranges 445 \
+		--access Allow \
+		--verbose >> ${_logFile} 2>&1
+	if (( $? != 0 )); then
+		echo "`date` - FAIL: az network nsg rule create smb-cloud-shell" | tee -a ${_logFile}
 		exit 1
 	fi
 	#
@@ -440,8 +480,8 @@ if (( $? != 0 )); then
 fi
 #
 #--------------------------------------------------------------------------------
-# Create the first Azure virtual machine (VM), intended to be used as the primary
-# Oracle database server/host...
+# Create the Azure virtual machine (VM), intended to be used as the Oracle
+# database server/host...
 #--------------------------------------------------------------------------------
 echo "`date` - INFO: az vm create ${_vmName}..." | tee -a ${_logFile}
 az vm create \
@@ -458,6 +498,138 @@ az vm create \
 	--verbose >> ${_logFile} 2>&1
 if (( $? != 0 )); then
 	echo "`date` - FAIL: az vm create ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Create Azure storage account from which an Azure Files standard SMB/CIFS share
+# will be allocated for Oracle archived redo log files...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: az storage account create ${_saName}..." | tee -a ${_logFile}
+az storage account create \
+	--name ${_saName} \
+	--sku Standard_RAGRS \
+	--kind StorageV2 \
+	--verbose >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: az storage account create ${_saName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Create Azure Files standard SMB/CIFS share which will be allocated for Oracle
+# database archived redo log files...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: az storage share create ${_shareName}..." | tee -a ${_logFile}
+az storage share create \
+	--name ${_shareName} \
+	--account-name ${_saName} \
+	--quota 4096 \
+	--verbose >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: az storage share create ${_shareName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Retrieve the URL to access the storage account...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: az storage account show ${_saName}..." | tee -a ${_logFile}
+_saHttps=`az storage account show \
+	--resource-group ${_rgName} \
+	--name ${_saName} \
+	--query "primaryEndpoints.file" | tr -d '"'`
+if (( $? != 0 )); then
+	echo "`date` - FAIL: az storage account show ${_saName}" | tee -a ${_logFile}
+	exit 1
+fi
+echo "`date` - INFO: az storage account ${_saName} is \"${_saHttps}\"..." | tee -a ${_logFile}
+#
+#--------------------------------------------------------------------------------
+# Retrieve the storage account keys for later use when mounting the CIFS/SMB
+# file share within the VM...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: az storage account keys list ${_saName}..." | tee -a ${_logFile}
+_saKey=`az storage account keys list \
+	--resource-group ${_rgName} \
+	--account-name ${_saName} \
+	--query "[0].value" | tr -d '"'`
+if (( $? != 0 )); then
+	echo "`date` - FAIL: az storage account keys list ${_saName}" | tee -a ${_logFile}
+	exit 1
+fi
+if [[ "${_outputMode}" = "verbose" ]]
+then
+	echo "`date` - DBUG: az storage account keys list is \"${_saKey}\""
+fi
+#
+#--------------------------------------------------------------------------------
+# Create an Azure Recovery Services vault...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: az backup vault create ${_vaultName}..." | tee -a ${_logFile}
+az backup vault create \
+	--name ${_vaultName} \
+	--tags owner=${_azureOwner} project=${_azureProject} \
+	--verbose >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: az backup vault create ${_vaultName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Create an Azure Backup policy...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: az backup policy create ${_policyName}..." | tee -a ${_logFile}
+az backup policy create \
+	--name ${_policyName} \
+	--vault-name ${_vaultName} \
+	--backup-management-type AzureIaasVM \
+	--workload-type VM \
+	--policy '
+{
+  "eTag": null,
+  "location": null,
+  "name": "${_policyName}",
+  "properties": {
+    "backupManagementType": "AzureIaasVM",
+    "instantRpDetails": {
+      "azureBackupRgNamePrefix": null,
+      "azureBackupRgNameSuffix": null
+    },
+    "instantRpRetentionRangeInDays": 2,
+    "protectedItemsCount": 0,
+    "retentionPolicy": {
+      "dailySchedule": {
+        "retentionDuration": {
+          "count": 30,
+          "durationType": "Days"
+        },
+        "retentionTimes": [
+          "2020-09-30T19:30:00+00:00"
+        ]
+      },
+      "monthlySchedule": null,
+      "retentionPolicyType": "LongTermRetentionPolicy",
+      "weeklySchedule": null,
+      "yearlySchedule": null
+    },
+    "schedulePolicy": {
+      "schedulePolicyType": "SimpleSchedulePolicy",
+      "scheduleRunDays": null,
+      "scheduleRunFrequency": "Daily",
+      "scheduleRunTimes": [
+        "2020-09-30T19:30:00+00:00"
+      ],
+      "scheduleWeeklyFrequency": 0
+    },
+    "timeZone": "UTC"
+  },
+  "resourceGroup": "${_rgName}",
+  "tags": null,
+  "type": "Microsoft.RecoveryServices/vaults/backupPolicies"
+}'	--verbose >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: az backup policy create ${_policyName}" | tee -a ${_logFile}
 	exit 1
 fi
 #
@@ -763,9 +935,9 @@ else # ...else if _nbrDataDisks > 0, then use managed disks for database storage
 		# entire SCSI device...
 		#------------------------------------------------------------------------
 		echo "`date` - INFO: parted ${_scsiDev} mkpart primary on ${_vmName}..." | tee -a ${_logFile}
-		ssh ${_azureOwner}@${_ipAddr} "sudo parted -a opt ${_scsiDev} mkpart primary ext4 0% 100%" >> ${_logFile} 2>&1
+		ssh ${_azureOwner}@${_ipAddr} "sudo parted -a opt ${_scsiDev} mkpart primary xfs 0% 100%" >> ${_logFile} 2>&1
 		if (( $? != 0 )); then
-			echo "`date` - FAIL: parted mkpart -a opt ${_scsiDev} primary ext4 0% 100% on ${_vmName}" | tee -a ${_logFile}
+			echo "`date` - FAIL: parted mkpart -a opt ${_scsiDev} primary xfs 0% 100% on ${_vmName}" | tee -a ${_logFile}
 			exit 1
 		fi
 		#
@@ -826,10 +998,10 @@ else # ...else if _nbrDataDisks > 0, then use managed disks for database storage
 	#--------------------------------------------------------------------------------
 	# SSH into the VM to create an EXT4 filesystem on the logical volume...
 	#--------------------------------------------------------------------------------
-	echo "`date` - INFO: mkfs.ext4 /dev/${_vgName}/${_lvName} on ${_vmName}..." | tee -a ${_logFile}
-	ssh ${_azureOwner}@${_ipAddr} "sudo mkfs.ext4 /dev/${_vgName}/${_lvName}" >> ${_logFile} 2>&1
+	echo "`date` - INFO: mkfs.xfs /dev/${_vgName}/${_lvName} on ${_vmName}..." | tee -a ${_logFile}
+	ssh ${_azureOwner}@${_ipAddr} "sudo mkfs.xfs /dev/${_vgName}/${_lvName}" >> ${_logFile} 2>&1
 	if (( $? != 0 )); then
-		echo "`date` - FAIL: mkfs.ext4 /dev/${_vgName}/${_lvName} on ${_vmName}" | tee -a ${_logFile}
+		echo "`date` - FAIL: mkfs.xfs /dev/${_vgName}/${_lvName} on ${_vmName}" | tee -a ${_logFile}
 		exit 1
 	fi
 	#
@@ -862,7 +1034,7 @@ else # ...else if _nbrDataDisks > 0, then use managed disks for database storage
 			echo "`date` - FAIL: parse mount options from \"${_mountOutput}\"" | tee -a ${_logFile}
 			exit 1
 		fi
-		ssh ${_azureOwner}@${_ipAddr} "sudo su - root -c \"echo '/dev/mapper/${_vgName}-${_lvName} ${_oraMntDir} ext4 ${_mountOpts} 0 0' >> /etc/fstab\"" >> ${_logFile} 2>&1
+		ssh ${_azureOwner}@${_ipAddr} "sudo su - root -c \"echo '/dev/mapper/${_vgName}-${_lvName} ${_oraMntDir} xfs ${_mountOpts} 0 0' >> /etc/fstab\"" >> ${_logFile} 2>&1
 		if (( $? != 0 )); then
 			echo "`date` - FAIL: append \"${_lvName} ${_oraMntDir}\" to \"/etc/fstab\" on ${_vmName}" | tee -a ${_logFile}
 			exit 1
@@ -912,23 +1084,23 @@ fi
 #
 #------------------------------------------------------------------------
 # SSH into first VM to create sub-directories for the Oracle database
-# files and for the Oracle Flash Recovery Area (FRA) files...
+# files, the Oracle Fast Recovery Area (FRA) files, and the Oracle
+# archived redo log files...
 #------------------------------------------------------------------------
-echo "`date` - INFO: mkdir ${_oraDataDir} ${_oraFRADir} on ${_vmName}..." | tee -a ${_logFile}
-ssh ${_azureOwner}@${_ipAddr} "sudo mkdir -p ${_oraDataDir} ${_oraFRADir}" >> ${_logFile} 2>&1
+echo "`date` - INFO: mkdir ${_oraDataDir} ${_oraFRADir} ${_oraArchDir} on ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo mkdir -p ${_oraDataDir} ${_oraFRADir} ${_oraArchDir}" >> ${_logFile} 2>&1
 if (( $? != 0 )); then
-	echo "`date` - FAIL: sudo mkdir -p ${_oraDataDir} ${_oraFRADir} on ${_vmName}" | tee -a ${_logFile}
+	echo "`date` - FAIL: sudo mkdir -p ${_oraDataDir} ${_oraFRADir} ${_oraArchDir} on ${_vmName}" | tee -a ${_logFile}
 	exit 1
 fi
 #
 #--------------------------------------------------------------------------------
-# SSH into the first VM to set the OS account:group ownership of the
-# directory mount-point...
+# SSH into the first VM to set the OS account:group ownership of the mount-points...
 #--------------------------------------------------------------------------------
-echo "`date` - INFO: chown -R ${_oraMntDir} on ${_vmName}..." | tee -a ${_logFile}
-ssh ${_azureOwner}@${_ipAddr} "sudo chown -R ${_oraOsAcct}:${_oraOsGroup} ${_oraMntDir}" >> ${_logFile} 2>&1
+echo "`date` - INFO: chown -R ${_oraMntDir} ${_oraArchDir} on ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo chown -R ${_oraOsAcct}:${_oraOsGroup} ${_oraMntDir} ${_oraArchDir}" >> ${_logFile} 2>&1
 if (( $? != 0 )); then
-	echo "`date` - FAIL: sudo chown -R ${_oraMntDir} on ${_vmName}" | tee -a ${_logFile}
+	echo "`date` - FAIL: sudo chown -R ${_oraMntDir} ${_oraArchDir} on ${_vmName}" | tee -a ${_logFile}
 	exit 1
 fi
 #
@@ -977,6 +1149,92 @@ if (( $? != 0 )); then
 fi
 #
 #--------------------------------------------------------------------------------
+# Install the CIFS-UTILS package on the VM...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: yum install cifs-utils on ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo yum install cifs-utils -y" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo yum install cifs-utils on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Re-set the contents of the ".cred" file within "/etc/smbcredentials" folder...
+#--------------------------------------------------------------------------------
+_cifsCredDir=/etc/smbcredentials
+_cifsCredFile=${_cifsCredDir}/${_saName}.cred
+echo "`date` - INFO: set contents of ${_cifsCredFile} on ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo mkdir -p ${_cifsCredDir}" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo mkdir -p ${_cifsCredDir} on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+ssh ${_azureOwner}@${_ipAddr} "sudo rm -f ${_cifsCredFile}" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo echo rm -f ${_cifsCredFile} on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+ssh ${_azureOwner}@${_ipAddr} "echo username=${_saName} | sudo tee ${_cifsCredFile} > /dev/null" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: echo username=${_saName} | sudo tee ${_cifsCredFile} on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+ssh ${_azureOwner}@${_ipAddr} "sudo chmod 600 ${_cifsCredFile}" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo chmod 600 ${_cifsCredFile} on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+ssh ${_azureOwner}@${_ipAddr} "echo password=${_saKey} | sudo tee -a ${_cifsCredFile} > /dev/null" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: echo password=${_saKey} | sudo tee -a ${_cifsCredFile} on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Extract the CIFS/SMB path from the SMB HTTPS string and append the share name...
+#--------------------------------------------------------------------------------
+_cifsPath="`echo ${_saHttps} | sed 's/https://'`${_shareName}"
+#
+#--------------------------------------------------------------------------------
+# Retrieve numeric IDs for "oracle" OS account and "oinstall" OS group...
+#--------------------------------------------------------------------------------
+_oraUid=`ssh ${_azureOwner}@${_ipAddr} "grep oracle /etc/passwd" | awk -F: '{print $3}' 2>&1`
+if (( $? != 0 )); then
+	echo "`date` - FAIL: grep oracle /etc/passwd for UID on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+_oraGid=`ssh ${_azureOwner}@${_ipAddr} "grep oracle /etc/passwd" | awk -F: '{print $4}' 2>&1`
+if (( $? != 0 )); then
+	echo "`date` - FAIL: grep oracle /etc/passwd for GID on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Compile the CIFS/SMB options string to use when mounting...
+#--------------------------------------------------------------------------------
+_cifsOptions="vers=3.0,credentials=${_cifsCredFile},serverino,cache=none,uid=${_oraUid},gid=${_oraGid}"
+#
+#--------------------------------------------------------------------------------
+# Mount the Azure File standard share for the Oracle archived redo log files...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: mount -t cifs ${_cifsPath} ${_oraArchDir} on ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo mount -t cifs ${_cifsPath} ${_oraArchDir} -o ${_cifsOptions}" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo mount -t cifs ${_cifsPath} ${_oraArchDir} -o ${_cifsOptions} on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Set mount options for permanent setting after reboot in /etc/fstab...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: set CIFS/SMB info into /etc/fstab on ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "echo ${_cifsPath} ${_oraArchDir} cifs ${_cifsOptions} 0 0 | sudo tee -a /etc/fstab" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: echo ${_cifsPath} ${_oraArchDir} cifs ${_cifsOptions} 0 0 | sudo tee -a /etc/fstab on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
 # SSH into the first VM to run the Oracle Database Creation Assistant (DBCA)
 # program to create a new primary Oracle database...
 #--------------------------------------------------------------------------------
@@ -999,7 +1257,7 @@ ssh ${_azureOwner}@${_ipAddr} "sudo su - ${_oraOsAcct} -c \"\
 		-enableArchive TRUE \
 		-memoryMgmtType ${_oraMemType} \
 		-memoryPercentage ${_oraMemPct} \
-		-initParams db_create_online_log_dest_1=${_oraFRADir} \
+		-initParams db_create_online_log_dest_1=${_oraFRADir},log_archive_dest_1=\"location=${_oraArchDir}\"\
 		-recoveryAreaDestination ${_oraFRADir} \
 		-recoveryAreaSize ${_oraFraSzGB} \
 		-redoLogFileSize ${_oraRedoSizeMB}\"" >> ${_logFile} 2>&1
@@ -1124,6 +1382,142 @@ ssh ${_azureOwner}@${_ipAddr} "sudo mv /tmp/orareboot.sh /root" >> ${_logFile} 2
 if (( $? != 0 ))
 then
 	echo "`date` - FAIL: \"sudo mv /tmp/orareboot.sh /root\" on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Enable Azure VM Backup protection using the policy and vault just created...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: az backup protection enable-for-vm ${_vmName}..." | tee -a ${_logFile}
+az backup protection enable-for-vm \
+	--policy-name ${_policyName} \
+	--vault-name ${_vaultName} \
+	--vm ${_vmName} \
+	--verbose >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: az backup protection enable-for-vm ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Pause for 60 seconds before attempting to initiate the initial Azure VM Backup...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: pausing for 60 seconds before initiating first backup on ${_vmName}..." | tee -a ${_logFile}
+sleep 60
+#
+#--------------------------------------------------------------------------------
+# Start an Azure VM Backup running now...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: az backup protection backup-now ${_vmName}..." | tee -a ${_logFile}
+az backup protection backup-now \
+	--item-name ${_vmName} \
+	--backup-management-type AzureIaasVM \
+	--workload-type VM \
+	--container-name ${_vmName} \
+	--vault-name ${_vaultName} \
+	--verbose >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: az backup protection backup-now ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#--------------------------------------------------------------------------------
+# Create an OS account named "azbackup" belonging to the OS group named
+# "backupdba" on the VM...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: useradd -g backupdba azbackup on ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo useradd -g backupdba azbackup" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+        echo "`date` - FAIL: sudo useradd -g backupdba azbackup on ${_vmName}" | tee -a ${_logFile}
+        exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Create an OS-authenticated database account named OPS$AZBACKUP within the
+# database, and also create a stored procedure named AZMESSAGE within the
+# SYSBACKUP account...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: setup Azure VM Backup within Oracle database on ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo su - ${_oraOsAcct} -c \"
+export ORACLE_SID=${_oraSid}
+export ORACLE_HOME=${_oraHome}
+export PATH=${_oraHome}/bin:\${PATH}
+unset TNS_ADMIN
+cd ${_oraHome}/dbs
+mv orapw${_oraSid} orapw${_oraSid}.save
+orapwd input_file=orapw${_oraSid}.save file=orapw${_oraSid} format=12.2
+sqlplus -S -L / as sysdba << __EOF__
+whenever oserror exit failure
+whenever sqlerror exit failure
+CREATE USER \\\"OPS\\\\\\\$AZBACKUP\\\" IDENTIFIED EXTERNALLY;
+GRANT CREATE SESSION, ALTER SESSION, SYSBACKUP TO \\\"OPS\\\\\\\$AZBACKUP\\\";
+GRANT EXECUTE ON DBMS_SYSTEM TO SYSBACKUP;
+CREATE PROCEDURE sysbackup.azmessage(in_msg IN VARCHAR2)
+AS v_timestamp     VARCHAR2(32);
+BEGIN
+  SELECT TO_CHAR(SYSDATE, 'YYYY-MM-DD HH24:MI:SS')
+    INTO v_timestamp FROM DUAL;
+  DBMS_OUTPUT.PUT_LINE(v_timestamp || ' - ' || in_msg);
+  SYS.DBMS_SYSTEM.KSDWRT(SYS.DBMS_SYSTEM.ALERT_FILE, in_msg);
+END azmessage;
+/
+SHOW ERRORS
+exit success
+__EOF__\"" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: setup Azure VM Backup within Oracle database on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# After starting an initial Azure VM Backup a few steps ago, check to see if the
+# Linux VM agent has created an "azure" subdirectory within the "/etc" directory
+# as part of Azure VM Backup initialization.  If a file named "workload.conf" does
+# not appear within the "/etc/azure" sub-directory within 60 seconds, then exit
+# with an error...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: waiting 60 secs (or less) for workload.conf to appear on ${_vmName}..." | tee -a ${_logFile}
+typeset -i _cnt=0
+while (( ${_cnt} < 20 ))
+do
+	ssh ${_azureOwner}@${_ipAddr} "if [ -f /etc/azure/workload.conf ]; then exit 0; else exit 1; fi" >> ${_logFile} 2>&1
+	if (( $? == 0 ))
+	then
+		break;
+	fi
+	sleep 3
+	typeset -i _cnt=${_cnt}+1
+done
+if (( ${_cnt} >= 20 ))
+then
+	echo "`date` - FAIL: workload.conf did not appear within 60 secs on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Create a local copy of the "workload.conf" file to be copied into the
+# "/etc/azure" subdirectory on the VM, with contents appropriate for configuring
+# the backing up of an Oracle database...
+#--------------------------------------------------------------------------------
+rm -f ${_workloadConfFile}
+echo "[workload]"				>  ${_workloadConfFile}
+echo "workload_name = oracle"			>> ${_workloadConfFile}
+echo "configuration_path = /etc/oratab"		>> ${_workloadConfFile}
+echo "timeout = 90"				>> ${_workloadConfFile}
+echo "linux_user = azbackup"			>> ${_workloadConfFile}
+#
+#--------------------------------------------------------------------------------
+# Now that the "/etc/azure/workload.conf" file has been initialized on the VM,
+# replace it with contents appropriate for backing up Oracle databases...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: copy new workload.conf file to ${_vmName}..." | tee -a ${_logFile}
+scp ${_workloadConfFile} ${_azureOwner}@${_ipAddr}:/tmp/workload.conf >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: scp ${_workloadConfFile} ${_azureOwner}@${_ipAddr}:/tmp/workload.conf on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+ssh ${_azureOwner}@${_ipAddr} "sudo mv /tmp/workload.conf /etc/azure/workload.conf" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo mv /tmp/workload.conf /etc/azure/workload.conf on ${_vmName}" | tee -a ${_logFile}
 	exit 1
 fi
 #
