@@ -114,12 +114,14 @@
 #	TGorman	03jun21	v1.1	Enable Azure VM Backup on resident Oracle db,
 #				attach Azure Files standard share for archived
 #				redo log file storage
+#	TGorman	06jul21	v1.2	regenerate initramfs and reboot before finish
 #================================================================================
 #
 #--------------------------------------------------------------------------------
 # Set global environment variables with default values...
 #--------------------------------------------------------------------------------
-_progVersion="1.1"
+_progVersion="1.2"
+_progName="cr_oravm.sh"
 _outputMode="terse"
 _azureOwner="`whoami`"
 _azureProject="oravm"
@@ -164,7 +166,7 @@ _vnetName="${_azureOwner}-${_azureProject}-vnet"
 _subnetName="${_azureOwner}-${_azureProject}-subnet"
 _nsgName="${_azureOwner}-${_azureProject}-nsg"
 _nicName="${_azureOwner}-${_azureProject}-nic01"
-_pubIpName="${_azureOwner}-${_azureProject}-public-ip01"
+_pubIpName="${_azureOwner}-${_azureProject}-pip01"
 _vmName="${_azureOwner}-${_azureProject}-vm01"
 _saName="${_azureOwner}${_azureProject}sa01"
 _shareName="${_azureOwner}-${_azureProject}-share01"
@@ -289,7 +291,6 @@ then
 	echo "`date` - DBUG: parameter _oraSid is \"${_oraSid}\""
 	echo "`date` - DBUG: parameter _vmUrn is \"${_vmUrn}\""
 	echo "`date` - DBUG: parameter _vmDataDiskSzGB is \"${_vmDataDiskSzGB}\""
-	echo "`date` - DBUG: variable _progVersion is \"${_progVersion}\""
 	echo "`date` - DBUG: variable _workDir is \"${_workDir}\""
 	echo "`date` - DBUG: variable _logFile is \"${_logFile}\""
 	echo "`date` - DBUG: variable _vnetName is \"${_vnetName}\""
@@ -340,6 +341,7 @@ rm -f ${_logFile}
 #--------------------------------------------------------------------------------
 # Verify that the resource group exists...
 #--------------------------------------------------------------------------------
+echo "`date` - INFO: ${_progName} version ${_progVersion}..." | tee -a ${_logFile}
 echo "`date` - INFO: az group exists -n ${_rgName}..." | tee -a ${_logFile}
 if [[ "`az group exists -n ${_rgName}`" != "true" ]]; then
 	echo "`date` - FAIL: resource group \"${_rgName}\" does not exist" | tee -a ${_logFile}
@@ -1400,27 +1402,6 @@ if (( $? != 0 )); then
 fi
 #
 #--------------------------------------------------------------------------------
-# Pause for 60 seconds before attempting to initiate the initial Azure VM Backup...
-#--------------------------------------------------------------------------------
-echo "`date` - INFO: pausing for 60 seconds before initiating first backup on ${_vmName}..." | tee -a ${_logFile}
-sleep 60
-#
-#--------------------------------------------------------------------------------
-# Start an Azure VM Backup running now...
-#--------------------------------------------------------------------------------
-echo "`date` - INFO: az backup protection backup-now ${_vmName}..." | tee -a ${_logFile}
-az backup protection backup-now \
-	--item-name ${_vmName} \
-	--backup-management-type AzureIaasVM \
-	--workload-type VM \
-	--container-name ${_vmName} \
-	--vault-name ${_vaultName} \
-	--verbose >> ${_logFile} 2>&1
-if (( $? != 0 )); then
-	echo "`date` - FAIL: az backup protection backup-now ${_vmName}" | tee -a ${_logFile}
-	exit 1
-fi
-#--------------------------------------------------------------------------------
 # Create an OS account named "azbackup" belonging to the OS group named
 # "backupdba" on the VM...
 #--------------------------------------------------------------------------------
@@ -1469,31 +1450,6 @@ if (( $? != 0 )); then
 fi
 #
 #--------------------------------------------------------------------------------
-# After starting an initial Azure VM Backup a few steps ago, check to see if the
-# Linux VM agent has created an "azure" subdirectory within the "/etc" directory
-# as part of Azure VM Backup initialization.  If a file named "workload.conf" does
-# not appear within the "/etc/azure" sub-directory within 60 seconds, then exit
-# with an error...
-#--------------------------------------------------------------------------------
-echo "`date` - INFO: waiting 60 secs (or less) for workload.conf to appear on ${_vmName}..." | tee -a ${_logFile}
-typeset -i _cnt=0
-while (( ${_cnt} < 20 ))
-do
-	ssh ${_azureOwner}@${_ipAddr} "if [ -f /etc/azure/workload.conf ]; then exit 0; else exit 1; fi" >> ${_logFile} 2>&1
-	if (( $? == 0 ))
-	then
-		break;
-	fi
-	sleep 3
-	typeset -i _cnt=${_cnt}+1
-done
-if (( ${_cnt} >= 20 ))
-then
-	echo "`date` - FAIL: workload.conf did not appear within 60 secs on ${_vmName}" | tee -a ${_logFile}
-	exit 1
-fi
-#
-#--------------------------------------------------------------------------------
 # Create a local copy of the "workload.conf" file to be copied into the
 # "/etc/azure" subdirectory on the VM, with contents appropriate for configuring
 # the backing up of an Oracle database...
@@ -1510,6 +1466,11 @@ echo "linux_user = azbackup"			>> ${_workloadConfFile}
 # replace it with contents appropriate for backing up Oracle databases...
 #--------------------------------------------------------------------------------
 echo "`date` - INFO: copy new workload.conf file to ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo mkdir /etc/azure" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo mkdir /etc/azure on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
 scp ${_workloadConfFile} ${_azureOwner}@${_ipAddr}:/tmp/workload.conf >> ${_logFile} 2>&1
 if (( $? != 0 )); then
 	echo "`date` - FAIL: scp ${_workloadConfFile} ${_azureOwner}@${_ipAddr}:/tmp/workload.conf on ${_vmName}" | tee -a ${_logFile}
@@ -1519,6 +1480,43 @@ ssh ${_azureOwner}@${_ipAddr} "sudo mv /tmp/workload.conf /etc/azure/workload.co
 if (( $? != 0 )); then
 	echo "`date` - FAIL: sudo mv /tmp/workload.conf /etc/azure/workload.conf on ${_vmName}" | tee -a ${_logFile}
 	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Pause for 60 more seconds before attempting to initiate the initial Azure VM Backup...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: pausing for 60 seconds before initiating first backup on ${_vmName}..." | tee -a ${_logFile}
+sleep 60
+#
+#--------------------------------------------------------------------------------
+# Start an Azure VM Backup running now...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: az backup protection backup-now ${_vmName}..." | tee -a ${_logFile}
+az backup protection backup-now \
+	--item-name ${_vmName} \
+	--backup-management-type AzureIaasVM \
+	--workload-type VM \
+	--container-name ${_vmName} \
+	--vault-name ${_vaultName} \
+	--verbose >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: az backup protection backup-now ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Re-generate "initramfs" image file and reboot before finishing...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: regenerating initramfs then rebooting ${_vmName}..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo dracut -H -f /boot/initramfs-\$(uname -r).img \$(uname -r)" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo dracut -H -f /boot/initramfs-\$(uname -r).img \$(uname -r) on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+az vm restart --name ${_vmName} --verbose >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+        echo "`date` - FAIL: az vm restart --name ${_vmName}" | tee -a ${_logFile}
+        exit 1
 fi
 #
 #--------------------------------------------------------------------------------
