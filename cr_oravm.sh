@@ -115,13 +115,15 @@
 #				attach Azure Files standard share for archived
 #				redo log file storage
 #	TGorman	06jul21	v1.2	regenerate initramfs and reboot before finish
+#	TGorman	29jul21	v1.3	regenerate grub and grub2.cfg files before
+#				regenerating initramfs file and rebooting...
 #================================================================================
 #
 #--------------------------------------------------------------------------------
 # Set global environment variables with default values...
 #--------------------------------------------------------------------------------
-_progVersion="1.2"
-_progName="cr_oravm.sh"
+_progVersion="1.3"
+_progName="cr_oravm"
 _outputMode="terse"
 _azureOwner="`whoami`"
 _azureProject="oravm"
@@ -341,7 +343,7 @@ rm -f ${_logFile}
 #--------------------------------------------------------------------------------
 # Verify that the resource group exists...
 #--------------------------------------------------------------------------------
-echo "`date` - INFO: ${_progName} version ${_progVersion}..." | tee -a ${_logFile}
+echo "`date` - INFO: ${_progName}.sh version ${_progVersion}..." | tee -a ${_logFile}
 echo "`date` - INFO: az group exists -n ${_rgName}..." | tee -a ${_logFile}
 if [[ "`az group exists -n ${_rgName}`" != "true" ]]; then
 	echo "`date` - FAIL: resource group \"${_rgName}\" does not exist" | tee -a ${_logFile}
@@ -1259,7 +1261,7 @@ ssh ${_azureOwner}@${_ipAddr} "sudo su - ${_oraOsAcct} -c \"\
 		-enableArchive TRUE \
 		-memoryMgmtType ${_oraMemType} \
 		-memoryPercentage ${_oraMemPct} \
-		-initParams db_create_online_log_dest_1=${_oraFRADir},log_archive_dest_1=\"location=${_oraArchDir}\"\
+		-initParams db_create_online_log_dest_1=${_oraFRADir},log_archive_dest_1=\"location=${_oraArchDir}\" \
 		-recoveryAreaDestination ${_oraFRADir} \
 		-recoveryAreaSize ${_oraFraSzGB} \
 		-redoLogFileSize ${_oraRedoSizeMB}\"" >> ${_logFile} 2>&1
@@ -1481,6 +1483,11 @@ if (( $? != 0 )); then
 	echo "`date` - FAIL: sudo mv /tmp/workload.conf /etc/azure/workload.conf on ${_vmName}" | tee -a ${_logFile}
 	exit 1
 fi
+ssh ${_azureOwner}@${_ipAddr} "sudo chown root:root /etc/azure/workload.conf" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo chown root:root /etc/azure/workload.conf on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
 #
 #--------------------------------------------------------------------------------
 # Pause for 60 more seconds before attempting to initiate the initial Azure VM Backup...
@@ -1505,18 +1512,128 @@ if (( $? != 0 )); then
 fi
 #
 #--------------------------------------------------------------------------------
-# Re-generate "initramfs" image file and reboot before finishing...
+# Edit the "/etc/default/grub" configuration file has the correct list of LVM2
+# volume groups and logical volumes in "rd.lvm.lv" entries...
 #--------------------------------------------------------------------------------
-echo "`date` - INFO: regenerating initramfs then rebooting ${_vmName}..." | tee -a ${_logFile}
-ssh ${_azureOwner}@${_ipAddr} "sudo dracut -H -f /boot/initramfs-\$(uname -r).img \$(uname -r)" >> ${_logFile} 2>&1
+echo "`date` - INFO: reset LVM2 info in /etc/default/grub configuration file..." | tee -a ${_logFile}
+_tmpGrubFile=/tmp/.${_progName}_grub_$$.tmp
+rm -f ${_tmpGrubFile}
+scp ${_azureOwner}@${_ipAddr}:/etc/default/grub ${_tmpGrubFile} >> ${_logFile} 2>&1
 if (( $? != 0 )); then
-	echo "`date` - FAIL: sudo dracut -H -f /boot/initramfs-\$(uname -r).img \$(uname -r) on ${_vmName}" | tee -a ${_logFile}
+	echo "`date` - FAIL: scp /etc/default/grub from ${_vmName}" | tee -a ${_logFile}
 	exit 1
 fi
+if [[ "`grep '^GRUB_CMDLINE_LINUX=' ${_tmpGrubFile}`" = "" ]]
+then	# ...create a new blank GRUB_CMDLINE_LINUX string...
+	#
+	_grubCmdlineLinux="GRUB_CMDLINE_LINUX=\"\""
+	_addGrubCmdlineLinux=true
+	_spc=""
+	#
+else	# ...strip the existing "rd.lvm.lv" entries from GRUB_CMDLINE_LINUX string...
+	#
+	_grubCmdlineLinux=`echo ${_str} | \
+				sed 's~"rd.lvm.lv=[a-z0-9]*/[a-z0-9]* ~"~g' | \
+				sed 's~ rd.lvm.lv=[a-z0-9]*/[a-z0-9]*"~"~g' | \
+				sed 's~rd.lvm.lv=[a-z0-9]*/[a-z0-9]* ~~g'`
+	_addGrubCmdlineLinux=false
+	_spc=" "
+	#
+fi
+_tmpLvsFile=/tmp/.${_progName}_lvs_$$.tmp
+_tmpErrFile=/tmp/.${_progName}_err_$$.tmp
+rm -f ${_tmpLvsFile} ${_tmpErrFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo lvs -o vg_name,lv_name" 2> ${_tmpErrFile} | sed '1d' > ${_tmpLvsFile}
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo lvs -o vg_name,lv_name on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+while read _vg _lv
+do
+	_grubCmdlineLinux=`echo ${_grubCmdlineLinux} | sed "s~\"\$~${_spc}rd.lvm.lv=${_vg}/${_lv}\"~"`
+	_spc=" "
+done < ${_tmpLvsFile}
+rm -f ${_tmpLvsFile}
+if [[ "`cat ${_tmpErrFile}`" != "" ]]
+then
+	echo "`date` - FAIL: sudo lvs -o vg_name,lv_name on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+rm -f ${_tmpErrFile}
+if [[ "${_addGrubCmdlineLinux}" = "true" ]]; then
+	echo "${_grubCmdlineLinux}" >> ${_tmpGrubFile}
+	if (( $? != 0 )); then
+		echo "`date` - FAIL: echo GRUB_CMDLINE_LINUX >> ${_tmpGrubFile}" | tee -a ${_logFile}
+		exit 1
+	fi
+else
+	sed -i "s~^GRUB_CMDLINE_LINUX=\"[^\"]*\"\$~${_grubCmdlineLinux}~" ${_tmpGrubFile} >> ${_logFile} 2>&1
+	if (( $? != 0 )); then
+		echo "`date` - FAIL: sed -i GRUB_CMDLINE_LINUX ${_tmpGrubFile}" | tee -a ${_logFile}
+		exit 1
+	fi
+fi
+scp ${_tmpGrubFile} ${_azureOwner}@${_ipAddr}:/tmp/grub.tmp >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: scp ${_tmpGrubFile} to /tmp/grub.tmp on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+rm -f ${_tmpGrubFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo cp /tmp/grub.tmp /etc/default/grub" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo cp /tmp/grub.tmp /etc/default/grub on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Regenerate the initramfs file in the boot directory...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: using dracut to regenerate initramfs..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo dracut -f /boot/initramfs-\$(uname -r).img \$(uname -r)" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo dracut -f /boot/initramfs-\$(uname -r).img \$(uname -r) on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Recreate the GRUB2 configuration file...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: recreate grub2 configuration file..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo grub2-mkconfig -o /etc/grub2.cfg" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: sudo grub2-mkconfig -o /etc/grub2.cfg on ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# Reboot the virtual machine...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: reboot..." | tee -a ${_logFile}
 az vm restart --name ${_vmName} --verbose >> ${_logFile} 2>&1
 if (( $? != 0 )); then
-        echo "`date` - FAIL: az vm restart --name ${_vmName}" | tee -a ${_logFile}
-        exit 1
+	echo "`date` - FAIL: az vm restart --name ${_vmName}" | tee -a ${_logFile}
+	exit 1
+fi
+#
+#--------------------------------------------------------------------------------
+# After the reboot, restart the Oracle listener and database...
+#--------------------------------------------------------------------------------
+echo "`date` - INFO: restart Oracle listener and database..." | tee -a ${_logFile}
+ssh ${_azureOwner}@${_ipAddr} "sudo su - ${_oraOsAcct} -c \"\
+export ORACLE_SID=${_oraSid}
+export ORACLE_HOME=${_oraHome}
+export PATH=${_oraHome}/bin:\${PATH}
+unset TNS_ADMIN
+lsnrctl start LISTENER
+sqlplus -S -L / as sysdba << __EOF__
+whenever oserror exit failure
+whenever sqlerror exit failure
+startup
+exit success
+__EOF__\"" >> ${_logFile} 2>&1
+if (( $? != 0 )); then
+	echo "`date` - FAIL: restart Oracle listener and database on ${_vmName}" | tee -a ${_logFile}
+	exit 1
 fi
 #
 #--------------------------------------------------------------------------------
