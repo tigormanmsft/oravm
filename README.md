@@ -91,7 +91,7 @@ For example, to create an E16ds v4 VM with four 2 TiB data disks on the Azure ma
             -P ora19c \
             -i Standard_E16ds_v4 
             -n 2 \
-            -z 2048 \
+            -z 1024 \
             -r westus2
 
 This will have the following impact, besides generating the example output displayed in the "oravm_output.txt" file...
@@ -99,7 +99,7 @@ This will have the following impact, besides generating the example output displ
  - the "-v" switch will display all script variables values and parameter values at the beginning of the execution
  - set the Azure subscription used by the session
  - set the Azure "project" value to "ora19c", which will impact the naming of all objects and tags
- - build a VM sized at Standard_E16ds_v4 using the default Azure marketplace Oracle19c image with an OS disk and two data disks of 2 TiB in the West US 2 region.
+ - build a VM sized at Standard_E16ds_v4 using the default Azure marketplace Oracle19c image with an OS disk and two data disks of 1 TiB in the West US 2 region.
  - please note that the marketplace Oracle19c image has ORACLE_HOME at a specific location
 
 # Finding Azure marketplace images from Oracle
@@ -190,3 +190,4 @@ If you remove all the entries for Oracle Linux standalone and Oracle WebLogic, l
     Oracle-Database-Se    Oracle       18.3.0.0                 Oracle:Oracle-Database-Se:18.3.0.0:18.3.20181213            18.3.20181213
 
 Reminder: the URN value is what the "cr_oravm.sh" script expects as a value for the "-u" switch, just FYI?
+# ora-vm
